@@ -20,7 +20,9 @@ eidos teams publish B-X05 --to team-updates
 
 A message is posted as you. Posting and replying need `ChannelMessage.Send`, which you can usually consent to yourself. Editing needs `ChannelMessage.ReadWrite`, which Microsoft requires an administrator to approve. `eidos teams login` asks for the first; `eidos teams login --edit` asks for both. Until editing is approved, a change posts a new message and the old one stays.
 
-An organization that will not consent to an outside app can register its own in Microsoft Entra ID (a public client, with public client flows allowed and the delegated permissions above) and set it, with no code change:
+`eidos teams login` opens Microsoft's sign-in in your browser. On a machine with no browser, `eidos teams login --device` signs in with a code you enter elsewhere, which security defaults and many organizations block.
+
+An organization that will not consent to an outside app can register its own in Microsoft Entra ID (a public client, with public client flows allowed, `http://localhost` as a Mobile and desktop redirect URI, and the delegated permissions above) and set it, with no code change:
 
 ```bash
 eidos plugin set teams client_id <application id>

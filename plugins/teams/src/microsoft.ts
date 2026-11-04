@@ -1,19 +1,25 @@
 // Microsoft from this machine, with nothing in between (Publish REQ12, REQ13,
-// REQ17, REQ18, REQ21): the device code sign-in against Entra ID, and the three
-// Graph v1.0 requests a message takes. A 429 waits as long as `Retry-After` says
+// REQ17, REQ18, REQ21): the sign-in against Entra ID, in the browser or with a
+// device code, and the three Graph v1.0 requests a message takes. A 429 waits as long as `Retry-After` says
 // and tries again, a few times; a failure names the provider's status and
 // message, and never a token.
 
+import { spawn } from 'node:child_process';
+import { createHash, randomBytes } from 'node:crypto';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { ProviderError } from '../../../packages/core/src/errors.ts';
 
 // The Virtual Panda's multi-tenant Entra app, a public client with no secret.
-// Empty until the app is registered; `client_id`, a `me` setting, stands in.
-export const DEFAULT_CLIENT_ID = '';
+// `client_id`, a `me` setting, stands in for it.
+export const DEFAULT_CLIENT_ID = 'e1c53a47-293c-422b-a75c-4aaddfe910c7';
 
 const SEND = 'ChannelMessage.Send';
 const EDIT = 'ChannelMessage.ReadWrite';
 const TIMEOUT_MS = 30_000;
 const RETRIES = 4;
+const BROWSER_SIGN_IN_SECONDS = 900;
+const BROWSER_POLL_SECONDS = 1;
 
 // Refused by the organization rather than by the person: said as such, with what to hand their administrator.
 export class ConsentError extends Error {
@@ -60,6 +66,10 @@ const refused = (sign: Sign): ConsentError => {
 };
 
 const CONSENT_CODES = /AADSTS(65001|65004|90094|90095|90099|50105)\b/;
+// Security defaults and many Conditional Access policies block the device code flow, while a sign-in in the browser still passes.
+const DEVICE_CODE_BLOCKED = /AADSTS530035\b/;
+
+const isConsentRefusal = (code: string, said: string): boolean => code === 'authorization_declined' || code === 'access_denied' || code === 'consent_required' || CONSENT_CODES.test(said);
 
 async function postForm(url: string, form: Record<string, string>): Promise<{ status: number; body: Record<string, unknown> }> {
   let response: Response;
@@ -158,12 +168,131 @@ export async function pollDeviceCode(sign: Sign, deviceCode: string): Promise<Po
   if (code === 'authorization_pending') return { state: 'pending' };
   if (code === 'slow_down') return { state: 'slower' };
   const said = String(body['error_description'] ?? code);
-  if (code === 'authorization_declined' || code === 'access_denied' || code === 'consent_required' || CONSENT_CODES.test(said)) throw refused(sign);
+  if (isConsentRefusal(code, said)) throw refused(sign);
+  if (DEVICE_CODE_BLOCKED.test(said)) throw new ProviderError('Your organization blocks signing in with a code. Run `eidos teams login` without --device, on a machine with a browser.', status);
   if (code === 'expired_token' || code === 'code_expired') {
     const address = consentAddress(sign);
-    throw new ProviderError(`The sign-in code ran out before it finished. If Microsoft said an administrator must approve this app, send them this address: ${address}`, null);
+    throw new ProviderError(
+      `The sign-in code ran out before it finished. If Microsoft said you do not have access, your organization blocks signing in with a code: run \`eidos teams login\` without --device. If it said an administrator must approve this app, send them this address: ${address}`,
+      null,
+    );
   }
   throw new ProviderError(`Microsoft refused the sign-in: ${said}`, status);
+}
+
+export interface BrowserSignIn {
+  address: string;
+  interval: number;
+  expires_in: number;
+  poll(): Poll;
+  close(): void;
+}
+
+const landingPage = (signedIn: boolean): string =>
+  `<!doctype html><meta charset="utf-8"><title>Eidos MD</title><p>${signedIn ? 'You are signed in to Microsoft. You can close this tab and go back to Eidos MD.' : 'The sign-in did not finish. Go back to Eidos MD to see what to do next.'}</p>`;
+
+// The authorization code flow with PKCE: Microsoft sends the browser back to a port on
+// this machine that only this sign-in listens on, and the code it carries is worthless
+// without the verifier held here. `state` keeps any other request to the port from
+// ending the sign-in.
+export async function startBrowserSignIn(sign: Sign): Promise<BrowserSignIn> {
+  const verifier = randomBytes(32).toString('base64url');
+  const state = randomBytes(16).toString('base64url');
+  let finished: { poll: Poll } | { failure: Error } | null = null;
+  let answered = false;
+
+  const finish = async (query: URLSearchParams, redirectUri: string): Promise<Tokens> => {
+    const code = query.get('code');
+    if (!code) {
+      const error = query.get('error') ?? '';
+      const said = query.get('error_description') ?? error;
+      if (isConsentRefusal(error, said)) throw refused(sign);
+      throw new ProviderError(`Microsoft refused the sign-in: ${said}`, null);
+    }
+    const { status, body } = await postForm(`${loginBase()}/${encodeURIComponent(sign.tenant)}/oauth2/v2.0/token`, {
+      grant_type: 'authorization_code',
+      client_id: sign.clientId,
+      code,
+      redirect_uri: redirectUri,
+      code_verifier: verifier,
+      scope: scopeParam(sign.permissions),
+    });
+    if (status === 200 && typeof body['access_token'] === 'string') return tokensOf(body);
+    const error = String(body['error'] ?? '');
+    const said = String(body['error_description'] ?? error);
+    if (isConsentRefusal(error, said)) throw refused(sign);
+    throw new ProviderError(`Microsoft refused the sign-in: ${said}`, status);
+  };
+
+  const close = (): void => {
+    server.close();
+    server.closeAllConnections();
+  };
+  const server = createServer((request, response) => {
+    const url = new URL(request.url ?? '/', 'http://localhost');
+    if (url.pathname !== '/' || url.searchParams.get('state') !== state || answered) {
+      response.writeHead(404);
+      response.end();
+      return;
+    }
+    answered = true;
+    void finish(url.searchParams, redirectUri)
+      .then((tokens): void => {
+        finished = { poll: { state: 'done', tokens } };
+      })
+      .catch((cause: unknown): void => {
+        finished = { failure: cause instanceof Error ? cause : new Error(String(cause)) };
+      })
+      .finally(() => {
+        response.writeHead(200, { 'content-type': 'text/html; charset=utf-8', connection: 'close' });
+        response.end(landingPage(finished !== null && 'poll' in finished), close);
+      });
+  });
+  server.unref();
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', (cause) => reject(new ProviderError(`Could not start the sign-in on this machine: ${cause.message}`, null)));
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  const redirectUri = `http://localhost:${(server.address() as AddressInfo).port}`;
+  const deadline = Date.now() + BROWSER_SIGN_IN_SECONDS * 1000;
+  setTimeout(close, BROWSER_SIGN_IN_SECONDS * 1000).unref();
+
+  const query = new URLSearchParams({
+    client_id: sign.clientId,
+    response_type: 'code',
+    redirect_uri: redirectUri,
+    response_mode: 'query',
+    scope: scopeParam(sign.permissions),
+    state,
+    code_challenge: createHash('sha256').update(verifier).digest('base64url'),
+    code_challenge_method: 'S256',
+    // a browser signed in to several accounts would otherwise pick one for the person
+    prompt: 'select_account',
+  });
+  return {
+    address: `${loginBase()}/${encodeURIComponent(sign.tenant)}/oauth2/v2.0/authorize?${query.toString()}`,
+    interval: BROWSER_POLL_SECONDS,
+    expires_in: BROWSER_SIGN_IN_SECONDS,
+    poll: () => {
+      if (finished && 'failure' in finished) throw finished.failure;
+      if (finished) return finished.poll;
+      if (Date.now() > deadline) throw new ProviderError('The sign-in ran out before it finished. Run `eidos teams login` again.', null);
+      return { state: 'pending' };
+    },
+    close,
+  };
+}
+
+// A test's local Microsoft has no person to sign in, so its address is asked for directly, which follows the redirect back here.
+export function openInBrowser(address: string): void {
+  if (process.env['EIDOS_TEAMS_LOGIN_BASE']) {
+    void fetch(address).catch(() => undefined);
+    return;
+  }
+  const [command, ...args] = process.platform === 'darwin' ? ['open', address] : process.platform === 'win32' ? ['rundll32', 'url.dll,FileProtocolHandler', address] : ['xdg-open', address];
+  const child = spawn(command!, args, { detached: true, stdio: 'ignore' });
+  child.on('error', () => undefined);
+  child.unref();
 }
 
 // A fresh access token from the one kept. Microsoft may hand back a new refresh token, which the caller keeps.

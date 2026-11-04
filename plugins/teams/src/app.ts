@@ -1,6 +1,6 @@
 // The Teams plugin's app entry, which only the Eidos MD app mounts: the core's
-// routes, and the sign-in's. A device code stays in this process and a token in the
-// credentials file; no answer carries either.
+// routes, and the sign-in's. What proves a sign-in stays in this process and a token
+// in the credentials file; no answer carries either.
 import { HostError, type AppEntry } from 'eidosmd/plugin';
 import { answer, mountPublish } from '../../../packages/core/src/routes.ts';
 import type { TeamsApi } from './cli.ts';

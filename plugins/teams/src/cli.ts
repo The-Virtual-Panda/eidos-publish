@@ -1,5 +1,5 @@
 // The Teams plugin's CLI entry: the core's commands and API over Microsoft Graph,
-// and the device code sign-in. Built as a CommonJS bundle whose one import from the
+// and the sign-in, in the browser or with a device code. Built as a CommonJS bundle whose one import from the
 // CLI is `eidosmd/plugin`.
 import type { CliEntry, Host } from 'eidosmd/plugin';
 import { action, print, publishApi, registerPublish, type PublishApi } from '../../../packages/core/src/commands.ts';
@@ -7,7 +7,7 @@ import { credentials } from '../../../packages/core/src/credentials.ts';
 import { ProviderError } from '../../../packages/core/src/errors.ts';
 import { destinations, type Account, type Provider } from '../../../packages/core/src/publish.ts';
 import { teamsHtml } from './html.ts';
-import { canEdit, DEFAULT_CLIENT_ID, graph, permissionsFor, pollDeviceCode, readChannelLink, refresh, startDeviceCode, TEAMS_LIMIT_BYTES, type Channel, type Sign } from './microsoft.ts';
+import { canEdit, DEFAULT_CLIENT_ID, graph, openInBrowser, permissionsFor, pollDeviceCode, readChannelLink, refresh, startBrowserSignIn, startDeviceCode, TEAMS_LIMIT_BYTES, type Channel, type Poll, type Sign } from './microsoft.ts';
 
 interface TeamsSignIn {
   refresh_token: string;
@@ -19,17 +19,12 @@ interface TeamsSignIn {
   client_id: string;
 }
 
-export interface LoginStart {
-  user_code: string;
-  verification_uri: string;
-  interval: number;
-  expires_in: number;
-}
+export type LoginStart = { address: string; interval: number; expires_in: number } | { user_code: string; verification_uri: string; interval: number; expires_in: number };
 
 export type LoginPoll = { state: 'pending' | 'slower' } | { state: 'done'; account: Account };
 
 export interface TeamsApi extends PublishApi {
-  loginStart(edit: boolean): Promise<LoginStart>;
+  loginStart(edit: boolean, device?: boolean): Promise<LoginStart>;
   loginPoll(): Promise<LoginPoll>;
 }
 
@@ -90,22 +85,29 @@ const entry: CliEntry = {
       logout: () => held.drop(),
     };
 
-    let pending: { sign: Sign; deviceCode: string } | null = null;
+    let pending: { sign: Sign; poll: () => Poll | Promise<Poll>; close: () => void } | null = null;
     const api: TeamsApi = {
       ...publishApi(host, provider),
-      loginStart: async (edit) => {
+      loginStart: async (edit, device = false) => {
         const sign = signFor(permissionsFor(edit), clientId());
-        const code = await startDeviceCode(sign);
-        pending = { sign, deviceCode: code.device_code };
-        return { user_code: code.user_code, verification_uri: code.verification_uri, interval: code.interval, expires_in: code.expires_in };
+        pending?.close();
+        if (device) {
+          const code = await startDeviceCode(sign);
+          pending = { sign, poll: () => pollDeviceCode(sign, code.device_code), close: () => undefined };
+          return { user_code: code.user_code, verification_uri: code.verification_uri, interval: code.interval, expires_in: code.expires_in };
+        }
+        const browser = await startBrowserSignIn(sign);
+        pending = { sign, poll: browser.poll, close: browser.close };
+        return { address: browser.address, interval: browser.interval, expires_in: browser.expires_in };
       },
       loginPoll: async () => {
         if (!pending) throw new ProviderError('No sign-in is under way.', null);
-        const { sign, deviceCode } = pending;
+        const { sign } = pending;
         let poll;
         try {
-          poll = await pollDeviceCode(sign, deviceCode);
+          poll = await pending.poll();
         } catch (cause) {
+          pending.close();
           pending = null;
           throw cause;
         }
@@ -124,11 +126,17 @@ const entry: CliEntry = {
       command
         .command('login')
         .option('--edit', 'also ask for permission to edit messages in place, which your administrator must approve')
-        .description('sign in to Microsoft with a code you enter in your browser; a message is posted as you')
+        .option('--device', 'sign in with a code instead, for a machine with no browser; many organizations block this')
+        .description('sign in to Microsoft in your browser; a message is posted as you')
         .action(
-          action(async (options: { edit?: boolean }) => {
-            const start = await api.loginStart(options.edit === true);
-            print(`Go to ${start.verification_uri} and enter the code ${start.user_code}`);
+          action(async (options: { edit?: boolean; device?: boolean }) => {
+            const start = await api.loginStart(options.edit === true, options.device === true);
+            if ('address' in start) {
+              print(`Opening your browser to sign in to Microsoft. If it does not open, go to ${start.address}`);
+              openInBrowser(start.address);
+            } else {
+              print(`Go to ${start.verification_uri} and enter the code ${start.user_code}`);
+            }
             let interval = start.interval;
             for (;;) {
               await new Promise((resolve) => setTimeout(resolve, interval * 1000));

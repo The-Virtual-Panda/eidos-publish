@@ -6,7 +6,7 @@ import { changeBetween, measure, replyLines, worthReplying } from '../../../pack
 import { ProviderError } from '../../../packages/core/src/errors.ts';
 import { parse, plainText } from '../../../packages/core/src/render.ts';
 import { teamsHtml } from '../src/html.ts';
-import { adminConsentAddress, canEdit, readChannelLink } from '../src/microsoft.ts';
+import { adminConsentAddress, canEdit, readChannelLink, startBrowserSignIn } from '../src/microsoft.ts';
 
 const html = (markdown: string, title = 'Title'): string => teamsHtml(parse(markdown, 'fallback', title));
 
@@ -104,4 +104,15 @@ test('REQ13: the admin consent address names the tenant, the app, and the permis
   assert.equal(url.pathname, '/tenant-9/v2.0/adminconsent');
   assert.equal(url.searchParams.get('client_id'), 'client-1');
   assert.equal(url.searchParams.get('scope'), 'https://graph.microsoft.com/ChannelMessage.Send');
+});
+
+test('REQ12: a request to the sign-in port without its state neither ends the sign-in nor is answered', async () => {
+  const signIn = await startBrowserSignIn({ clientId: 'client-1', tenant: 'organizations', permissions: ['ChannelMessage.Send'] });
+  const asked = new URL(signIn.address);
+  assert.equal(asked.pathname, '/organizations/oauth2/v2.0/authorize');
+  const port = new URL(asked.searchParams.get('redirect_uri') ?? '').port;
+  const forged = await fetch(`http://127.0.0.1:${port}/?code=stolen&state=forged`);
+  assert.equal(forged.status, 404);
+  assert.deepEqual(signIn.poll(), { state: 'pending' });
+  signIn.close();
 });

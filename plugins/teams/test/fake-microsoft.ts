@@ -1,7 +1,8 @@
-// A fake Microsoft for the tests: Entra's device code and token endpoints and
+// A fake Microsoft for the tests: Entra's authorize, device code, and token endpoints and
 // the three Graph requests, over channels held in memory, with what each
 // request sent kept so a test can say exactly what reached Teams. Nothing here
 // is a real tenant, person, or token.
+import { createHash } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 
@@ -20,6 +21,9 @@ export interface FakeMicrosoft {
   failNext: Array<{ status: number; retryAfter?: string; message?: string }>;
   // the answers a device code poll gives, consumed one by one; empty, signed in
   pollAnswers: Array<{ status: number; body: Record<string, unknown> }>;
+  // every request for the sign-in page, and what the next ones send back in place of a code
+  authorizes: Array<Record<string, string>>;
+  authorizeAnswers: Array<Record<string, string>>;
   forms: Array<Record<string, string>>;
   // how many replies to refuse next, whatever else succeeds
   failReplies: number;
@@ -34,6 +38,8 @@ export async function startFakeMicrosoft(port = 0): Promise<FakeMicrosoft> {
     messages: new Map(),
     failNext: [],
     pollAnswers: [],
+    authorizes: [],
+    authorizeAnswers: [],
     forms: [],
     failReplies: 0,
     close: () => new Promise((resolve) => server.close(() => resolve())),
@@ -52,6 +58,15 @@ export async function startFakeMicrosoft(port = 0): Promise<FakeMicrosoft> {
     void (async () => {
       const url = new URL(request.url ?? '/', 'http://localhost');
       const text = await read(request);
+      if (url.pathname.endsWith('/oauth2/v2.0/authorize')) {
+        const asked = Object.fromEntries(url.searchParams);
+        state.authorizes.push(asked);
+        const back = new URL(asked['redirect_uri'] ?? '');
+        back.search = new URLSearchParams({ ...(state.authorizeAnswers.shift() ?? { code: 'fake-auth-code' }), state: asked['state'] ?? '' }).toString();
+        response.writeHead(302, { location: back.toString() });
+        response.end();
+        return;
+      }
       if (url.pathname.endsWith('/oauth2/v2.0/devicecode')) {
         state.forms.push(Object.fromEntries(new URLSearchParams(text)));
         return send(response, 200, { device_code: 'fake-device-code', user_code: 'ABCD-EFGH', verification_uri: 'https://microsoft.com/devicelogin', interval: 0, expires_in: 900 });
@@ -59,6 +74,13 @@ export async function startFakeMicrosoft(port = 0): Promise<FakeMicrosoft> {
       if (url.pathname.endsWith('/oauth2/v2.0/token')) {
         const form = Object.fromEntries(new URLSearchParams(text));
         state.forms.push(form);
+        if (form['grant_type'] === 'authorization_code') {
+          const asked = state.authorizes.at(-1);
+          const proved = createHash('sha256')
+            .update(form['code_verifier'] ?? '')
+            .digest('base64url');
+          if (form['code'] !== 'fake-auth-code' || form['redirect_uri'] !== asked?.['redirect_uri'] || proved !== asked?.['code_challenge']) return send(response, 400, { error: 'invalid_grant', error_description: 'AADSTS70008: the code does not prove out' });
+        }
         const answer = form['grant_type']?.endsWith('device_code') ? state.pollAnswers.shift() : undefined;
         if (answer) return send(response, answer.status, answer.body);
         const scope = (form['scope'] ?? [...state.forms].reverse().find((held) => held['scope'])?.['scope'] ?? '')

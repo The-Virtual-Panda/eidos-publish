@@ -1,11 +1,11 @@
-// The Teams plugin's page half: the core's, with Microsoft's device code sign-in,
+// The Teams plugin's page half: the core's, with Microsoft's sign-in in the browser,
 // and the message previewed as the HTML Teams will show.
 import { useEffect, useState, type JSX } from 'react';
-import { Button, Card, Input, Markdown, Notice, SettingRow, SettingsHead, Stack, Text, usePluginHost } from 'eidosmd/page';
+import { Button, Card, Input, Markdown, Notice, Row, SettingRow, SettingsHead, Stack, Text, usePluginHost } from 'eidosmd/page';
 import { publishPage, reason, useHostRef, type Account } from '../../../packages/core/src/page.tsx';
 import { TEAMS_STRINGS } from './page-strings.ts';
 
-type Signing = { user_code: string; verification_uri: string; interval: number };
+type Signing = { address: string; interval: number };
 type Refused = { message: string; address: string; permissions: string[] };
 
 function SignIn({ account, reload }: { account: Account | null; reload: () => void }): JSX.Element {
@@ -102,11 +102,13 @@ function SignIn({ account, reload }: { account: Account | null; reload: () => vo
         <Notice>
           <Stack gap="xs">
             <Text size="sm" block>
-              {t('signingIn', { address: signing.verification_uri })}
+              {t('signingIn')}
             </Text>
-            <Text size="lg" weight="strong" block data-testid="teams-user-code">
-              {signing.user_code}
-            </Text>
+            <Row>
+              <Button variant="primary" data-testid="teams-open-sign-in" onClick={() => window.open(signing.address, '_blank', 'noopener')}>
+                {t('openSignIn')}
+              </Button>
+            </Row>
             <Text size="sm" tone="muted" block>
               {t('waiting')}
             </Text>

@@ -82,10 +82,15 @@ test('REQ5: a dry run needs no sign-in and sends nothing', async () => {
 test('REQ12: a sign-in keeps its token in the owner-only file, and asks for only what was asked', async () => {
   await ok(['logout']);
   fake.forms.length = 0;
-  fake.pollAnswers.push({ status: 400, body: { error: 'authorization_pending' } });
+  fake.authorizes.length = 0;
   const said = await ok(['login']);
-  assert.match(said, /ABCD-EFGH/);
+  assert.match(said, /Opening your browser/);
   assert.match(said, /posts a new message/);
+  const asked = fake.authorizes[0];
+  assert.equal(asked?.['code_challenge_method'], 'S256');
+  assert.equal(asked?.['prompt'], 'select_account');
+  assert.match(asked?.['redirect_uri'] ?? '', /^http:\/\/localhost:\d+$/);
+  assert.equal('client_secret' in (fake.forms[0] ?? {}), false);
   const scope = fake.forms[0]?.['scope'] ?? '';
   assert.match(scope, /ChannelMessage\.Send/);
   assert.doesNotMatch(scope, /ReadWrite/);
@@ -99,9 +104,29 @@ test('REQ12: a sign-in keeps its token in the owner-only file, and asks for only
   assert.match(await ok(['whoami']), /Ada Test, can edit messages/);
 });
 
+test('REQ12: --device signs in with a code for a machine with no browser', async () => {
+  await ok(['logout']);
+  fake.forms.length = 0;
+  fake.pollAnswers.push({ status: 400, body: { error: 'authorization_pending' } });
+  const said = await ok(['login', '--device']);
+  assert.match(said, /ABCD-EFGH/);
+  assert.match(fake.forms[0]?.['scope'] ?? '', /ChannelMessage\.Send/);
+  assert.match(await ok(['whoami']), /Ada Test/);
+});
+
+test('REQ12: a device code the organization blocks says to sign in with the browser', async () => {
+  await ok(['logout']);
+  fake.pollAnswers.push({ status: 400, body: { error: 'invalid_grant', error_description: 'AADSTS530035: Access has been blocked by security defaults' } });
+  const result = await run(['login', '--device']);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /blocks signing in with a code/);
+  assert.match(result.stderr, /without --device/);
+  assert.equal(existsSync(credentials()), false);
+});
+
 test('REQ13: a sign-in the organization refuses says so, with the address for the administrator', async () => {
   await ok(['logout']);
-  fake.pollAnswers.push({ status: 400, body: { error: 'invalid_grant', error_description: 'AADSTS65001: The user or administrator has not consented' } });
+  fake.authorizeAnswers.push({ error: 'consent_required', error_description: 'AADSTS65001: The user or administrator has not consented' });
   const result = await run(['login', '--edit']);
   assert.equal(result.status, 1);
   assert.match(result.stderr, /organization has to approve/);
@@ -365,11 +390,13 @@ test('the page publishes through the same code, and a route never answers a toke
   assert.equal(JSON.stringify([state, plan, standing]).includes('fake-'), false);
 });
 
-test('the page starts a sign-in with no device code in the answer, and a refusal is shown whole', async () => {
+test('the page starts a sign-in with the address alone in the answer, and a refusal is shown whole', async () => {
   const start = await sandbox.route<Record<string, unknown>>('POST', 'login/start', { body: { edit: true } });
-  assert.equal(start['user_code'], 'ABCD-EFGH');
-  assert.equal('device_code' in start, false);
-  fake.pollAnswers.push({ status: 400, body: { error: 'authorization_declined' } });
+  assert.match(String(start['address']), /\/oauth2\/v2\.0\/authorize\?/);
+  assert.equal('code_verifier' in start, false);
+  assert.equal((await sandbox.route<{ state: string }>('POST', 'login/poll')).state, 'pending');
+  fake.authorizeAnswers.push({ error: 'access_denied', error_description: 'AADSTS65004: User declined to consent' });
+  await fetch(String(start['address']));
   const poll = await sandbox.route<{ state: string; address: string }>('POST', 'login/poll');
   assert.equal(poll.state, 'refused');
   assert.match(poll.address, /adminconsent/);
