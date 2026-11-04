@@ -20,8 +20,10 @@
     "jsx": "react-jsx"
   },
   "include": [
-    "src/**/*.ts",
-    "src/**/*.tsx",
-    "test/**/*.ts"
+    "packages/*/src/**/*.ts",
+    "packages/*/src/**/*.tsx",
+    "plugins/*/src/**/*.ts",
+    "plugins/*/src/**/*.tsx",
+    "plugins/*/test/**/*.ts"
   ]
 }

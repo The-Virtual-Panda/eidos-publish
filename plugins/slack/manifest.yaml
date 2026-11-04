@@ -1,0 +1,22 @@
+# The plugin's manifest, read by the host before any of its code runs.
+name: slack
+title: Publish to Slack
+description: "Publish a blueprint or a top-level doc to a Slack channel as one message, edited in place when the file changes, and only when you ask"
+version: 0.1.0
+min_host: 0.18.0
+settings:
+  - name: destinations
+    type: structured
+    scope: root
+    default: []
+    meaning: 'the channels this root publishes to: each a name and the channel read from its link or id'
+  - name: reply
+    type: checkbox
+    scope: root
+    default: true
+    meaning: reply in the message's thread when an edit is big enough, so people find out
+  - name: reply_min_chars
+    type: number
+    scope: root
+    default: 120
+    meaning: the characters added and removed in a message that make an edit big enough to reply; a heading added, removed, or renamed always is

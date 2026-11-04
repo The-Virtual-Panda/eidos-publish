@@ -1,4 +1,4 @@
-// The plugin end to end in a sandbox the testing kit makes: `eidos channels` run
+// The plugin end to end in a sandbox the testing kit makes: `eidos teams` run
 // as a person would, and the app's routes as the page calls them, against the
 // fake Microsoft.
 import assert from 'node:assert/strict';
@@ -17,17 +17,17 @@ let fake: FakeMicrosoft;
 let env: Record<string, string>;
 let n = 0;
 
-const run = (args: string[]) => sandbox.run(['channels', ...args], { env });
+const run = (args: string[]) => sandbox.run(['teams', ...args], { env });
 const ok = async (args: string[]): Promise<string> => {
   const result = await run(args);
-  assert.equal(result.status, 0, `eidos channels ${args.join(' ')}\n${result.stderr}${result.stdout}`);
+  assert.equal(result.status, 0, `eidos teams ${args.join(' ')}\n${result.stderr}${result.stdout}`);
   return result.stdout;
 };
-const published = (): string => readFileSync(path.join(sandbox.root, '.eidos/plugins/channels/published.yaml'), 'utf8');
-const credentials = (): string => path.join(sandbox.appData, 'plugins/channels/credentials.json');
+const published = (): string => readFileSync(path.join(sandbox.root, '.eidos/plugins/teams/published.yaml'), 'utf8');
+const credentials = (): string => path.join(sandbox.appData, 'plugins/teams/credentials.json');
 const writeDoc = (text: string): void => writeFileSync(path.join(sandbox.root, DOC), text);
 const signIn = async (edit: boolean): Promise<void> => {
-  await ok(['login', 'teams', ...(edit ? ['--edit'] : [])]);
+  await ok(['login', ...(edit ? ['--edit'] : [])]);
 };
 // each test publishes to a destination of its own, so none sees another's record
 const destination = async (): Promise<string> => {
@@ -38,14 +38,14 @@ const destination = async (): Promise<string> => {
 
 before(async () => {
   fake = await startFakeMicrosoft();
-  env = { EIDOS_CHANNELS_LOGIN_BASE: fake.address, EIDOS_CHANNELS_GRAPH_BASE: fake.address };
+  env = { EIDOS_TEAMS_LOGIN_BASE: fake.address, EIDOS_TEAMS_GRAPH_BASE: fake.address };
   Object.assign(process.env, env);
-  sandbox = await pluginSandbox('dist');
+  sandbox = await pluginSandbox('plugins/teams/dist');
   const framework = path.join(sandbox.root, '.eidos/Framework.yaml');
   const text = readFileSync(framework, 'utf8');
   writeFileSync(framework, `${text.replace(/^top_level:.*\n(?:[ -].*\n)*/m, '')}top_level:\n  - title: Overview\n    path: ../${DOC}\n    description: The overview\n`);
   writeDoc('# Overview\n\nFirst words.\n');
-  const set = await sandbox.run(['plugin', 'set', 'channels', 'client_id', 'client-1'], { env });
+  const set = await sandbox.run(['plugin', 'set', 'teams', 'client_id', 'client-1'], { env });
   assert.equal(set.status, 0, set.stderr);
 });
 after(async () => {
@@ -61,30 +61,29 @@ beforeEach(() => {
 
 test('REQ2: a destination is added by its link and shared in the settings, and a bad one is refused', async () => {
   const name = await destination();
-  const settings = readFileSync(path.join(sandbox.root, '.eidos/plugins/channels/settings.yaml'), 'utf8');
+  const settings = readFileSync(path.join(sandbox.root, '.eidos/plugins/teams/settings.yaml'), 'utf8');
   assert.match(settings, /19:abc@thread\.tacv2/);
   assert.equal((await run(['connect', name, '--channel', LINK])).status, 1);
   const bad = await run(['connect', 'bad', '--channel', 'https://example.com']);
   assert.equal(bad.status, 1);
   assert.match(bad.stderr, /Get link to channel/);
-  assert.match((await run(['connect', 'later', '--provider', 'slack', '--channel', 'x'])).stderr, /Slack is not available yet/);
 });
 
 test('REQ5: a dry run needs no sign-in and sends nothing', async () => {
-  await ok(['logout', 'teams']);
+  await ok(['logout']);
   const name = await destination();
   const plan = JSON.parse(await ok(['publish', DOC, '--to', name, '--dry-run', '--json'])) as { action: string; message: string; dry_run: boolean };
   assert.equal(plan.action, 'post');
   assert.equal(plan.message, '<h1>Overview</h1><p>First words.</p>');
   assert.equal(fake.graph.length, 0);
-  assert.equal(existsSync(path.join(sandbox.root, '.eidos/plugins/channels/published.yaml')) && published().includes(name), false);
+  assert.equal(existsSync(path.join(sandbox.root, '.eidos/plugins/teams/published.yaml')) && published().includes(name), false);
 });
 
 test('REQ12: a sign-in keeps its token in the owner-only file, and asks for only what was asked', async () => {
-  await ok(['logout', 'teams']);
+  await ok(['logout']);
   fake.forms.length = 0;
   fake.pollAnswers.push({ status: 400, body: { error: 'authorization_pending' } });
-  const said = await ok(['login', 'teams']);
+  const said = await ok(['login']);
   assert.match(said, /ABCD-EFGH/);
   assert.match(said, /posts a new message/);
   const scope = fake.forms[0]?.['scope'] ?? '';
@@ -93,7 +92,7 @@ test('REQ12: a sign-in keeps its token in the owner-only file, and asks for only
   assert.match(scope, /offline_access/);
   const file = credentials();
   assert.equal(statSync(file).mode & 0o777, 0o600);
-  assert.equal((JSON.parse(readFileSync(file, 'utf8')) as { teams: { refresh_token: string } }).teams.refresh_token, REFRESH);
+  assert.equal((JSON.parse(readFileSync(file, 'utf8')) as { refresh_token: string }).refresh_token, REFRESH);
   fake.forms.length = 0;
   await signIn(true);
   assert.match(fake.forms[0]?.['scope'] ?? '', /ChannelMessage\.ReadWrite/);
@@ -101,9 +100,9 @@ test('REQ12: a sign-in keeps its token in the owner-only file, and asks for only
 });
 
 test('REQ13: a sign-in the organization refuses says so, with the address for the administrator', async () => {
-  await ok(['logout', 'teams']);
+  await ok(['logout']);
   fake.pollAnswers.push({ status: 400, body: { error: 'invalid_grant', error_description: 'AADSTS65001: The user or administrator has not consented' } });
-  const result = await run(['login', 'teams', '--edit']);
+  const result = await run(['login', '--edit']);
   assert.equal(result.status, 1);
   assert.match(result.stderr, /organization has to approve/);
   assert.match(result.stderr, /adminconsent\?client_id=client-1/);
@@ -335,8 +334,8 @@ test('REQ20: no token reaches output, the settings, or the root, and a rotated r
   await signIn(true);
   const name = await destination();
   const output = [await ok(['publish', DOC, '--to', name, '--json']), await ok(['whoami', '--json']), await ok(['status', '--json'])].join('');
-  const held = JSON.parse(readFileSync(credentials(), 'utf8')) as { teams: { refresh_token: string } };
-  assert.equal(held.teams.refresh_token, REFRESH_ROTATED);
+  const held = JSON.parse(readFileSync(credentials(), 'utf8')) as { refresh_token: string };
+  assert.equal(held.refresh_token, REFRESH_ROTATED);
   const walk = (dir: string): string[] => readdirSync(dir, { withFileTypes: true }).flatMap((entry) => (entry.isDirectory() ? walk(path.join(dir, entry.name)) : [path.join(dir, entry.name)]));
   const root = walk(sandbox.root)
     .map((file) => readFileSync(file, 'utf8'))

@@ -2,9 +2,11 @@
 // reading a channel's link.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { changeBetween, measure, replyHtml, worthReplying } from '../src/change.ts';
-import { adminConsentAddress, canEdit, ProviderError, readChannelLink } from '../src/microsoft.ts';
-import { parse, plainText, teamsHtml } from '../src/render.ts';
+import { changeBetween, measure, replyLines, worthReplying } from '../../../packages/core/src/change.ts';
+import { ProviderError } from '../../../packages/core/src/errors.ts';
+import { parse, plainText } from '../../../packages/core/src/render.ts';
+import { teamsHtml } from '../src/html.ts';
+import { adminConsentAddress, canEdit, readChannelLink } from '../src/microsoft.ts';
 
 const html = (markdown: string, title = 'Title'): string => teamsHtml(parse(markdown, 'fallback', title));
 
@@ -71,9 +73,9 @@ test('REQ6: a change is big enough by its characters or by a heading', () => {
   assert.equal(worthReplying(renamed, 120), true);
 });
 
-test('REQ6: a reply names sections, escaped, and is never a diff', () => {
-  const change = { added_chars: 1, removed_chars: 1, sections_added: ['A <b>'], sections_removed: [], sections_changed: ['C'] };
-  assert.equal(replyHtml(change), '<p><strong>Updated</strong></p><ul><li>Added: A &lt;b&gt;</li><li>Changed: C</li></ul>');
+test('REQ6: a reply names sections and is never a diff', () => {
+  const change = { added_chars: 1, removed_chars: 1, sections_added: ['A'], sections_removed: [], sections_changed: ['C'] };
+  assert.deepEqual(replyLines(change), ['Added: A', 'Changed: C']);
 });
 
 test('plain text keeps headings apart from a paragraph that opens with #', () => {

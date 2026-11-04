@@ -1,0 +1,216 @@
+// The commands and the API every publishing plugin has in common: destinations,
+// publish, and status. A plugin adds its own `login`, since signing in is where the
+// services differ.
+import type { Host } from 'eidosmd/plugin';
+import { ProviderError } from './errors.ts';
+import {
+  carryOut,
+  destinations,
+  openFile,
+  planFor,
+  readPublished,
+  registerIdChange,
+  statusRows,
+  type Account,
+  type Destination,
+  type Done,
+  type Plan,
+  type PlanOptions,
+  type Provider,
+  type StatusRow,
+} from './publish.ts';
+
+export interface FileStanding {
+  file: string;
+  title: string;
+  rows: Array<{ destination: string; state: 'current' | 'changed' | 'unpublished'; url: string | null; at: string | null; by: string | null }>;
+}
+
+export interface PublishApi {
+  destinations(): Destination[];
+  account(): Account | null;
+  connect(name: string, link: string): Promise<Destination>;
+  disconnect(name: string): Promise<void>;
+  logout(): boolean;
+  plan(file: string, destination: string, options?: PlanOptions): Plan;
+  publish(file: string, destination: string, options?: PlanOptions): Promise<Done>;
+  status(destination?: string): StatusRow[];
+  // one open file against each destination, for the page's view
+  standing(file: string): FileStanding;
+}
+
+export const print = (text: string): void => {
+  process.stdout.write(`${text}\n`);
+};
+const json = (value: unknown): void => print(JSON.stringify(value, null, 2));
+
+export const action =
+  <A extends unknown[]>(work: (...args: A) => void | Promise<void>) =>
+  async (...args: A): Promise<void> => {
+    try {
+      await work(...args);
+    } catch (cause) {
+      process.stderr.write(`${cause instanceof Error ? cause.message : String(cause)}\n`);
+      process.exitCode = 1;
+    }
+  };
+
+export function publishApi(host: Host, provider: Provider): PublishApi {
+  return {
+    destinations: () => destinations(host),
+    account: () => provider.account(),
+    connect: async (name, link) => {
+      const named = name.trim();
+      if (!/^[a-z0-9][a-z0-9-]*$/i.test(named)) throw new ProviderError('A destination is named with letters, digits, and hyphens, such as team-updates.', null);
+      const held = destinations(host);
+      if (held.some((destination) => destination.name.toLowerCase() === named.toLowerCase())) throw new ProviderError(`There is already a destination called ${named}.`, null);
+      const destination = { name: named, ...provider.readChannel(link) } as Destination;
+      await host.settings().set('destinations', [...held, destination]);
+      host.emit('changed', {});
+      return destination;
+    },
+    disconnect: async (name) => {
+      const held = destinations(host);
+      const next = held.filter((destination) => destination.name.toLowerCase() !== name.trim().toLowerCase());
+      if (next.length === held.length) throw new ProviderError(`There is no destination called ${name}.`, null);
+      await host.settings().set('destinations', next);
+      host.emit('changed', {});
+    },
+    logout: () => {
+      const dropped = provider.logout();
+      if (dropped) host.emit('changed', {});
+      return dropped;
+    },
+    plan: (file, destination, options) => planFor(host, provider, file, destination, options),
+    publish: (file, destination, options) => carryOut(host, provider, file, destination, options),
+    status: (destination) => statusRows(host, provider, destination),
+    standing: (ref) => {
+      const file = openFile(host, provider, ref);
+      const held = readPublished(host)[file.key] ?? {};
+      const rows = destinations(host).map((destination) => {
+        const sent = held[destination.name];
+        if (!sent) return { destination: destination.name, state: 'unpublished' as const, url: null, at: null, by: null };
+        const plan = planFor(host, provider, file.key, destination.name);
+        return { destination: destination.name, state: plan.action === 'none' ? ('current' as const) : ('changed' as const), url: sent.url, at: sent.at, by: sent.by };
+      });
+      return { file: file.key, title: file.title, rows };
+    },
+  };
+}
+
+export function registerPublish(host: Host, provider: Provider, api: PublishApi): void {
+  registerIdChange(host);
+  const { service, command: word } = provider;
+  host.command((command) => {
+    command
+      .command('logout')
+      .description('forget your sign-in on this machine')
+      .action(
+        action(() => {
+          print(api.logout() ? `Signed out of ${service}.` : `You were not signed in to ${service}.`);
+        }),
+      );
+
+    command
+      .command('whoami')
+      .option('--json', 'print as JSON')
+      .description('who is signed in on this machine, and whether a change edits its message')
+      .action(
+        action((options: { json?: boolean }) => {
+          const account = api.account();
+          if (options.json) return json({ account });
+          print(account ? `${service}: ${account.name}${account.detail ? `, ${account.detail}` : ''}` : `${service}: not signed in`);
+        }),
+      );
+
+    command
+      .command('connect')
+      .argument('<name>', "the destination's name")
+      .requiredOption('--channel <link>', provider.channelHelp)
+      .option('--json', 'print as JSON')
+      .description('add a channel this root publishes to')
+      .action(
+        action(async (name: string, options: { channel: string; json?: boolean }) => {
+          const destination = await api.connect(name, options.channel);
+          if (options.json) return json(destination);
+          print(`Added ${destination.name}${destination.channel_name ? `, the ${destination.channel_name} channel` : ''}.`);
+        }),
+      );
+
+    command
+      .command('disconnect')
+      .argument('<name>', "the destination's name")
+      .description('remove a destination; messages already sent stay in the channel')
+      .action(
+        action(async (name: string) => {
+          await api.disconnect(name);
+          print(`Removed ${name}. Its messages stay in the channel.`);
+        }),
+      );
+
+    command
+      .command('destinations')
+      .option('--json', 'print as JSON')
+      .description('the channels this root publishes to')
+      .action(
+        action((options: { json?: boolean }) => {
+          const rows = api.destinations();
+          if (options.json) return json(rows);
+          if (rows.length === 0) print(`No destinations yet. Add one with \`eidos ${word} connect <name> --channel <link>\`.`);
+          for (const row of rows) print(`${row.name}  ${row.channel_name}`.trimEnd());
+        }),
+      );
+
+    command
+      .command('publish')
+      .argument('<file>', "a blueprint's id or path, or a top-level doc's path")
+      .requiredOption('--to <destination>', 'the destination')
+      .option('--dry-run', 'print the message and the decision, and send nothing; no sign-in needed')
+      .option('--force', 'edit the message even though the file did not change')
+      .option('--no-reply', 'edit without replying in the thread')
+      .option('--json', 'print as JSON')
+      .description('post the file as one message, or edit that message when the file changed')
+      .action(
+        action(async (file: string, options: { to: string; dryRun?: boolean; force?: boolean; reply?: boolean; json?: boolean }) => {
+          const planOptions: PlanOptions = { ...(options.force ? { force: true } : {}), ...(options.reply === false ? { noReply: true } : {}) };
+          if (options.dryRun) {
+            const plan = api.plan(file, options.to, planOptions);
+            if (options.json) json({ ...plan, dry_run: true });
+            else {
+              print(
+                `${plan.action === 'none' ? 'Nothing to send' : plan.action === 'refused' ? 'Refused' : `Would ${plan.action === 'repost' ? 'post a new message' : plan.action}`}: ${plan.title} to ${plan.destination}. ${plan.reason}`,
+              );
+              if (plan.action !== 'none' && plan.action !== 'refused') print(`\n${plan.message}`);
+              if (plan.reply) print(`\nWould reply in the thread:\n${plan.reply.map((line) => `  ${line}`).join('\n')}`);
+            }
+            if (plan.action === 'refused') process.exitCode = 1;
+            return;
+          }
+          const done = await api.publish(file, options.to, planOptions);
+          if (options.json) json(done);
+          else {
+            const said = { posted: 'Posted', edited: 'Edited', reposted: 'Posted a new message', replaced: 'Replaced', unchanged: 'Nothing to send' }[done.outcome];
+            print(`${said}: ${done.file} to ${done.destination}. ${done.reason}${done.replied ? ' Replied in the thread.' : ''}`);
+            if (done.url) print(done.url);
+            if (done.reply_error) print(`The message is up to date, but the reply did not send: ${done.reply_error}`);
+          }
+          if (done.reply_error) process.exitCode = 1;
+        }),
+      );
+
+    command
+      .command('status')
+      .argument('[destination]', 'one destination; every one when none is named')
+      .option('--json', 'print as JSON')
+      .description('each published file and destination, and whether the file changed since its last publish, read from the root alone')
+      .action(
+        action((destination: string | undefined, options: { json?: boolean }) => {
+          const rows = api.status(destination);
+          if (options.json) return json(rows);
+          if (rows.length === 0) print('Nothing has been published from this root yet.');
+          const words = { current: 'current', changed: 'changed since its last publish', missing: 'its file left the root' };
+          for (const row of rows) print(`${row.file} → ${row.destination}: ${words[row.state]}`);
+        }),
+      );
+  });
+}

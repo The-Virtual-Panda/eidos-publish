@@ -1,7 +1,7 @@
 # The plugin's manifest, read by the host before any of its code runs.
-name: channels
-title: Publish to Channels
-description: Publish a blueprint or a top-level doc to a Microsoft Teams channel as one message, edited in place when the file changes, signed in as you and only when you ask
+name: teams
+title: Publish to Microsoft Teams
+description: "Publish a blueprint or a top-level doc to a Microsoft Teams channel as one message, edited in place when the file changes, signed in as you and only when you ask"
 version: 0.1.0
 min_host: 0.18.0
 settings:
@@ -9,7 +9,7 @@ settings:
     type: structured
     scope: root
     default: []
-    meaning: 'the channels this root publishes to: each a name, a provider, and the channel read from its link'
+    meaning: 'the channels this root publishes to: each a name and the channel read from its link'
   - name: reply
     type: checkbox
     scope: root

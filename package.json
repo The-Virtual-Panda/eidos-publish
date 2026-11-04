@@ -1,19 +1,19 @@
 {
-  "name": "@the-virtual-panda/channels",
-  "version": "0.1.0",
+  "name": "eidos-publish",
+  "version": "0.0.0",
   "private": true,
-  "description": "Publish a blueprint or a top-level doc to a Microsoft Teams channel as one message, edited in place when the file changes.",
+  "description": "Publish an Eidos blueprint or top-level doc to a chat channel as one message: two plugins, Microsoft Teams and Slack, sharing one core.",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/The-Virtual-Panda/eidos-channels.git"
+    "url": "git+https://github.com/The-Virtual-Panda/eidos-publish.git"
   },
   "type": "module",
   "scripts": {
     "build": "node scripts/build.mjs",
     "dev": "node scripts/build.mjs --watch",
     "check": "tsc --noEmit -p tsconfig.json",
-    "test": "node scripts/build.mjs && node --test --experimental-strip-types \"test/*.test.ts\"",
+    "test": "node scripts/build.mjs && node --test --experimental-strip-types \"plugins/*/test/*.test.ts\"",
     "install-local": "node scripts/install-local.mjs"
   },
   "devDependencies": {

@@ -1,15 +1,15 @@
-// The plugin's page half (Publish REQ10), drawn with the kit the Eidos MD page
-// hands a plugin (`eidosmd/page`): a Publish… command on an open blueprint or
-// top-level doc, a view in the Auxiliary Sidebar listing the channels it is
-// published to, and the settings page holding the channels and the person's
-// sign-in. Nothing sends until the person has seen what the dry run would send.
+// The page half every publishing plugin has in common (Publish REQ10), drawn with
+// the kit the Eidos MD page hands a plugin (`eidosmd/page`): a Publish… command on
+// an open blueprint or top-level doc, a view in the Auxiliary Sidebar listing the
+// channels it is published to, and the settings page holding the channels, with a
+// plugin's own sign-in above them. Nothing sends until the person has seen what the
+// dry run would send.
 import { useCallback, useEffect, useRef, useState, type JSX } from 'react';
 import {
   Badge,
   Button,
   Card,
   Input,
-  Markdown,
   Modal,
   Notice,
   Row,
@@ -26,15 +26,15 @@ import {
   type PagePlugin,
   type PluginHost,
 } from 'eidosmd/page';
-import { CHANNELS_STRINGS } from './page-strings.ts';
+import { PUBLISH_STRINGS } from './page-strings.ts';
 
 interface Destination {
   name: string;
   channel_name: string;
 }
-interface Account {
+export interface Account {
   name: string;
-  username: string;
+  detail: string;
   can_edit: boolean;
 }
 interface State {
@@ -68,20 +68,20 @@ interface OpenFile {
   path?: string;
 }
 
-const reason = (cause: unknown): string => (cause instanceof Error ? cause.message : String(cause));
+export const reason = (cause: unknown): string => (cause instanceof Error ? cause.message : String(cause));
 const fileOf = (open: OpenFile): string | null => (open.kind === 'blueprint' ? (open.id ?? open.path ?? null) : open.kind === 'doc' ? (open.path ?? null) : null);
 const publishable = (open: { kind: string }): boolean => open.kind === 'blueprint' || open.kind === 'doc';
 
 // The dialog is opened from a palette command and from the view, wherever the person is, so it lives in the page's layer.
 let openDialog: ((file: string, destination?: string) => void) | null = null;
 
-function useHostRef(host: PluginHost): { current: PluginHost } {
+export function useHostRef(host: PluginHost): { current: PluginHost } {
   const ref = useRef(host);
   ref.current = host;
   return ref;
 }
 
-function PublishDialog(): JSX.Element | null {
+function PublishDialog({ service, MessagePreview }: { service: string; MessagePreview: (props: { message: string }) => JSX.Element }): JSX.Element | null {
   const host = usePluginHost();
   const hostRef = useHostRef(host);
   const { t } = host;
@@ -160,8 +160,8 @@ function PublishDialog(): JSX.Element | null {
         <Row justify="end" gap="sm">
           <Button onClick={close}>{sendable ? t('cancel') : t('close')}</Button>
           {sendable && (
-            <Button variant="primary" disabled={sending} data-testid="channels-send" onClick={() => void send()}>
-              {t('send')}
+            <Button variant="primary" disabled={sending} data-testid="publish-send" onClick={() => void send()}>
+              {t('send', { service })}
             </Button>
           )}
         </Row>
@@ -227,7 +227,7 @@ function PublishDialog(): JSX.Element | null {
                   {t('preview')}
                 </Text>
                 <Card>
-                  <Markdown html={plan.message} />
+                  <MessagePreview message={plan.message} />
                 </Card>
               </Stack>
             )}
@@ -239,7 +239,7 @@ function PublishDialog(): JSX.Element | null {
 }
 
 // The open file against each channel, beside it in the Auxiliary Sidebar.
-function PublishedView(): JSX.Element {
+function PublishedView({ service }: { service: string }): JSX.Element {
   const host = usePluginHost();
   const hostRef = useHostRef(host);
   const { t } = host;
@@ -293,13 +293,13 @@ function PublishedView(): JSX.Element {
           </Row>
           <Row gap="sm">
             {row.state !== 'current' && (
-              <Button size="sm" variant="primary" data-testid="channels-publish-now" onClick={() => openDialog?.(standing.file, row.destination)}>
+              <Button size="sm" variant="primary" data-testid="publish-now" onClick={() => openDialog?.(standing.file, row.destination)}>
                 {t('publishNow')}
               </Button>
             )}
             {row.url && (
               <Button size="sm" onClick={() => window.open(row.url!, '_blank', 'noopener')}>
-                {t('openInTeams')}
+                {t('openIn', { service })}
               </Button>
             )}
           </Row>
@@ -309,16 +309,13 @@ function PublishedView(): JSX.Element {
   );
 }
 
-type Signing = { user_code: string; verification_uri: string; interval: number };
-type Refused = { message: string; address: string; permissions: string[] };
+export type SignIn = (props: { account: Account | null; reload: () => void }) => JSX.Element;
 
-function ChannelsSettings(): JSX.Element {
+function PublishSettings({ SignIn }: { SignIn: SignIn }): JSX.Element {
   const host = usePluginHost();
   const hostRef = useHostRef(host);
   const { t } = host;
   const [state, setState] = useState<State | null>(null);
-  const [signing, setSigning] = useState<Signing | null>(null);
-  const [refusal, setRefusal] = useState<Refused | null>(null);
   const [name, setName] = useState('');
   const [link, setLink] = useState('');
   const [busy, setBusy] = useState(false);
@@ -327,43 +324,6 @@ function ChannelsSettings(): JSX.Element {
   }, [hostRef, t]);
   useEffect(load, [load]);
   usePluginEvent('changed', load);
-
-  // the sign-in is finished in the browser, so this asks until Microsoft answers
-  useEffect(() => {
-    if (!signing) return;
-    let live = true;
-    let interval = signing.interval;
-    let timer: ReturnType<typeof setTimeout>;
-    const ask = (): void => {
-      hostRef.current.post<{ state: string } & Partial<Refused>>('login/poll').then(
-        (poll) => {
-          if (!live) return;
-          if (poll.state === 'done') {
-            setSigning(null);
-            load();
-            return;
-          }
-          if (poll.state === 'refused') {
-            setSigning(null);
-            setRefusal({ message: poll.message ?? '', address: poll.address ?? '', permissions: poll.permissions ?? [] });
-            return;
-          }
-          if (poll.state === 'slower') interval += 5;
-          timer = setTimeout(ask, interval * 1000);
-        },
-        (cause) => {
-          if (!live) return;
-          setSigning(null);
-          hostRef.current.toast(t('failed'), 'error', reason(cause));
-        },
-      );
-    };
-    timer = setTimeout(ask, interval * 1000);
-    return () => {
-      live = false;
-      clearTimeout(timer);
-    };
-  }, [hostRef, signing, load, t]);
 
   const act = async (work: () => Promise<unknown>): Promise<void> => {
     setBusy(true);
@@ -375,73 +335,12 @@ function ChannelsSettings(): JSX.Element {
       setBusy(false);
     }
   };
-  const signIn = (edit: boolean): Promise<void> =>
-    act(async () => {
-      setRefusal(null);
-      setSigning(await host.post<Signing>('login/start', { edit }));
-    });
 
   if (!state) return <SkeletonBar height={120} />;
   const { account, destinations } = state;
   return (
     <Stack gap="lg">
-      <Card>
-        <SettingsHead>{t('account')}</SettingsHead>
-        <SettingRow
-          label={account ? t('signedInAs', { name: account.name || account.username }) : t('notSignedIn')}
-          {...(account ? { hint: account.can_edit ? t('canEdit') : t('cannotEdit') } : {})}
-          control={
-            account ? (
-              <Button disabled={busy} onClick={() => void act(() => host.post('logout').then(load))}>
-                {t('signOut')}
-              </Button>
-            ) : (
-              <Button variant="primary" disabled={busy || signing !== null} data-testid="channels-sign-in" onClick={() => void signIn(false)}>
-                {t('signIn')}
-              </Button>
-            )
-          }
-        />
-        {account && !account.can_edit && (
-          <SettingRow
-            label={t('enableEdit')}
-            hint={t('enableEditHint')}
-            control={
-              <Button disabled={busy || signing !== null} onClick={() => void signIn(true)}>
-                {t('enableEdit')}
-              </Button>
-            }
-          />
-        )}
-        {signing && (
-          <Notice>
-            <Stack gap="xs">
-              <Text size="sm" block>
-                {t('signingIn', { address: signing.verification_uri })}
-              </Text>
-              <Text size="lg" weight="strong" block data-testid="channels-user-code">
-                {signing.user_code}
-              </Text>
-              <Text size="sm" tone="muted" block>
-                {t('waiting')}
-              </Text>
-            </Stack>
-          </Notice>
-        )}
-        {refusal && (
-          <Notice tone="error">
-            <Stack gap="xs">
-              <Text size="sm" weight="strong" block>
-                {t('refusedTitle')}
-              </Text>
-              <Text size="sm" block>
-                {t('refusedHint', { permissions: refusal.permissions.join(', ') })}
-              </Text>
-              <Input readOnly value={refusal.address} aria-label={t('refusedTitle')} />
-            </Stack>
-          </Notice>
-        )}
-      </Card>
+      <SignIn account={account} reload={load} />
       <Card>
         <SettingsHead>{t('channels')}</SettingsHead>
         <Text size="sm" tone="muted" block>
@@ -475,18 +374,18 @@ function ChannelsSettings(): JSX.Element {
         <SettingRow
           label={t('name')}
           control={
-            <Input aria-label={t('name')} placeholder={t('namePlaceholder')} value={name} data-testid="channels-name" onChange={(event: { target: HTMLInputElement }) => setName(event.target.value)} />
+            <Input aria-label={t('name')} placeholder={t('namePlaceholder')} value={name} data-testid="publish-name" onChange={(event: { target: HTMLInputElement }) => setName(event.target.value)} />
           }
         />
         <SettingRow
           label={t('link')}
           hint={t('linkHint')}
-          control={<Input aria-label={t('link')} value={link} data-testid="channels-link" onChange={(event: { target: HTMLInputElement }) => setLink(event.target.value)} />}
+          control={<Input aria-label={t('link')} value={link} data-testid="publish-link" onChange={(event: { target: HTMLInputElement }) => setLink(event.target.value)} />}
         />
         <Row justify="end">
           <Button
             variant="primary"
-            data-testid="channels-add"
+            data-testid="publish-add"
             disabled={busy || name.trim() === '' || link.trim() === ''}
             onClick={() =>
               void act(async () => {
@@ -505,22 +404,41 @@ function ChannelsSettings(): JSX.Element {
   );
 }
 
-export const page: PagePlugin = {
-  name: 'channels',
-  strings: CHANNELS_STRINGS,
-  views: [{ sector: 'auxiliary', name: 'published', title: 'Channels', icon: 'megaphone', render: () => <PublishedView />, when: publishable }],
-  commands: [
-    {
-      id: 'publish',
-      title: 'Publish…',
-      when: publishable,
-      run: (open: OpenFile) => {
-        const file = fileOf(open);
-        if (file) openDialog?.(file);
-      },
+export interface PublishPage {
+  name: string;
+  service: string;
+  strings: { en: Record<string, string>; es?: Record<string, string>; pt?: Record<string, string> };
+  SignIn: SignIn;
+  // the view's mark in the sidebar
+  Icon: () => JSX.Element;
+  // what people will see, in the form the service shows it
+  MessagePreview: (props: { message: string }) => JSX.Element;
+}
+
+// A plugin's page half: the core's words with its own over them, and its service throughout.
+export function publishPage({ name, service, strings, SignIn, Icon, MessagePreview }: PublishPage): PagePlugin {
+  return {
+    name,
+    strings: {
+      en: { ...PUBLISH_STRINGS.en, ...strings.en },
+      es: { ...PUBLISH_STRINGS.es, ...strings.es },
+      pt: { ...PUBLISH_STRINGS.pt, ...strings.pt },
     },
-  ],
-  layer: () => <PublishDialog />,
-  settings: () => <ChannelsSettings />,
-  settingsDrawn: ['destinations'],
-};
+    // the host keys a view by its name across every plugin, so this one carries the plugin's
+    views: [{ sector: 'auxiliary', name: `${name}-published`, title: service, icon: Icon, render: () => <PublishedView service={service} />, when: publishable }],
+    commands: [
+      {
+        id: 'publish',
+        title: 'Publish…',
+        when: publishable,
+        run: (open: OpenFile) => {
+          const file = fileOf(open);
+          if (file) openDialog?.(file);
+        },
+      },
+    ],
+    layer: () => <PublishDialog service={service} MessagePreview={MessagePreview} />,
+    settings: () => <PublishSettings SignIn={SignIn} />,
+    settingsDrawn: ['destinations'],
+  };
+}

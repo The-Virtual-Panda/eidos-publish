@@ -4,6 +4,8 @@
 // and tries again, a few times; a failure names the provider's status and
 // message, and never a token.
 
+import { ProviderError } from '../../../packages/core/src/errors.ts';
+
 // The Virtual Panda's multi-tenant Entra app, a public client with no secret.
 // Empty until the app is registered; `client_id`, a `me` setting, stands in.
 export const DEFAULT_CLIENT_ID = '';
@@ -12,15 +14,6 @@ const SEND = 'ChannelMessage.Send';
 const EDIT = 'ChannelMessage.ReadWrite';
 const TIMEOUT_MS = 30_000;
 const RETRIES = 4;
-
-export class ProviderError extends Error {
-  readonly status: number | null;
-  constructor(message: string, status: number | null) {
-    super(message);
-    this.name = 'ProviderError';
-    this.status = status;
-  }
-}
 
 // Refused by the organization rather than by the person: said as such, with what to hand their administrator.
 export class ConsentError extends Error {
@@ -41,8 +34,8 @@ function base(variable: string, real: string): string {
   if (!/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(given)) throw new ProviderError(`${variable} may only name a local address`, null);
   return given;
 }
-const loginBase = (): string => base('EIDOS_CHANNELS_LOGIN_BASE', 'https://login.microsoftonline.com');
-const graphBase = (): string => base('EIDOS_CHANNELS_GRAPH_BASE', 'https://graph.microsoft.com');
+const loginBase = (): string => base('EIDOS_TEAMS_LOGIN_BASE', 'https://login.microsoftonline.com');
+const graphBase = (): string => base('EIDOS_TEAMS_GRAPH_BASE', 'https://graph.microsoft.com');
 
 const shortScope = (scope: string): string => scope.replace(/^.*\//, '');
 export const canEdit = (scopes: string[]): boolean => scopes.some((scope) => shortScope(scope).toLowerCase() === EDIT.toLowerCase());
@@ -187,7 +180,7 @@ export async function refresh(sign: Sign, refreshToken: string): Promise<Tokens>
   }
   const said = String(body['error_description'] ?? body['error'] ?? status);
   if (CONSENT_CODES.test(said)) throw refused(sign);
-  throw new ProviderError('Your Microsoft sign-in has ended. Run `eidos channels login teams` again.', status);
+  throw new ProviderError('Your Microsoft sign-in has ended. Run `eidos teams login` again.', status);
 }
 
 // ---- Graph ----------------------------------------------------------------------------

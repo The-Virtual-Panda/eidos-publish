@@ -91,15 +91,8 @@ export function changeBetween(before: string, after: string): Change {
 export const worthReplying = (change: Change, minChars: number): boolean =>
   change.added_chars + change.removed_chars >= minChars || change.sections_added.length > 0 || change.sections_removed.length > 0;
 
-const escape = (text: string): string => text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-
 export function replyLines(change: Change): string[] {
   const line = (label: string, headings: string[]): string[] => (headings.length === 0 ? [] : [`${label}: ${headings.join(', ')}`]);
   const lines = [...line('Added', change.sections_added), ...line('Removed', change.sections_removed), ...line('Changed', change.sections_changed)];
   return lines.length > 0 ? lines : ['The text changed.'];
 }
-
-export const replyHtml = (change: Change): string =>
-  `<p><strong>Updated</strong></p><ul>${replyLines(change)
-    .map((line) => `<li>${escape(line)}</li>`)
-    .join('')}</ul>`;
