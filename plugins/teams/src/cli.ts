@@ -84,6 +84,7 @@ const entry: CliEntry = {
         const client = await signedIn(signIn);
         return client.search({ team: String(destination['team']), channel: String(destination['channel']) }, destination.channel_name, query, canMentionTags(signIn.scopes));
       },
+      mentionFits: (destination, mention) => (mention.kind === 'tag' ? mention.scope === destination['team'] : mention.kind === 'channel' ? mention.id === destination['channel'] : true),
       logout: () => held.drop(),
     };
 

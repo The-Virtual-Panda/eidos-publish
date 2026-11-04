@@ -6,6 +6,7 @@ import { ProviderError } from './errors.ts';
 import { confirm } from './prompt.ts';
 import {
   carryOut,
+  defaultMentions,
   destinationNamed,
   destinations,
   openFile,
@@ -32,6 +33,7 @@ export interface FileStanding {
 export interface PublishOptions {
   reply: boolean;
   reply_min_chars: number;
+  default_mentions: Mention[];
 }
 
 export interface PublishApi {
@@ -42,7 +44,8 @@ export interface PublishApi {
   disconnect(name: string): Promise<void>;
   // what the plugin's page draws itself, in words
   // who a message could mention, for the page's picker
-  searchMentions(destination: string, query: string): Promise<Mention[]>;
+  // with no channel named, across every channel, for the project's default
+  searchMentions(destination: string | undefined, query: string): Promise<Mention[]>;
   options(): PublishOptions;
   setOption(name: string, value: unknown): Promise<PublishOptions>;
   logout(): boolean;
@@ -69,11 +72,17 @@ export const action =
     }
   };
 
-const optionsOf = (host: Host): PublishOptions => {
+export const isMention = (value: unknown): value is Mention => {
+  const held = value as Partial<Mention> | null;
+  return typeof held === 'object' && held !== null && ['person', 'tag', 'channel'].includes(String(held.kind)) && typeof held.id === 'string' && typeof held.name === 'string';
+};
+
+const optionsOf = (host: Host, provider: Provider): PublishOptions => {
   const settings = host.settings();
   return {
     reply: settings.get<boolean>('reply') !== false,
     reply_min_chars: Number(settings.get<number>('reply_min_chars') ?? 120),
+    default_mentions: defaultMentions(host, provider),
   };
 };
 
@@ -111,18 +120,24 @@ export function publishApi(host: Host, provider: Provider): PublishApi {
       host.emit('changed', {});
       return destination;
     },
-    searchMentions: async (name, query) => (provider.searchMentions ? provider.searchMentions(destinationNamed(host, provider, name), query) : []),
-    options: () => optionsOf(host),
+    searchMentions: async (name, query) => {
+      if (!provider.searchMentions) return [];
+      const channels = name ? [destinationNamed(host, provider, name)] : destinations(host);
+      const found = await Promise.all(channels.map((channel) => provider.searchMentions!(channel, query)));
+      return [...new Map(found.flat().map((mention) => [`${mention.kind}:${mention.id}`, mention])).values()];
+    },
+    options: () => optionsOf(host, provider),
     setOption: async (name, value) => {
       const settings = host.settings();
       if (name === 'reply') await settings.set(name, value === true);
+      else if (name === 'default_mentions' && provider.searchMentions) await settings.set(name, Array.isArray(value) ? value.filter(isMention) : []);
       else if (name === 'reply_min_chars') {
         const chars = Number(value);
         if (!Number.isInteger(chars) || chars < 0) throw new ProviderError('The size of a change is a whole number of characters.', null);
         await settings.set(name, chars);
       } else throw new ProviderError(`There is no setting called ${name}.`, null);
       host.emit('changed', {});
-      return optionsOf(host);
+      return optionsOf(host, provider);
     },
     disconnect: async (name) => {
       const held = destinations(host);

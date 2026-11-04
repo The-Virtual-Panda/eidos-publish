@@ -38,11 +38,13 @@ export interface Account {
   name: string;
   detail: string;
   can_edit: boolean;
+  can_mention?: boolean;
 }
 interface Mention {
   kind: 'person' | 'tag' | 'channel';
   id: string;
   name: string;
+  scope?: string;
 }
 
 interface State {
@@ -91,6 +93,70 @@ export function useHostRef(host: PluginHost): { current: PluginHost } {
   return ref;
 }
 
+// Who to mention, found by typing. `destination` narrows it to one channel; left out, it looks across all of them.
+function MentionPicker({ destination, chosen, onChange, onProblem }: { destination?: string; chosen: Mention[]; onChange: (next: Mention[]) => void; onProblem: (cause: unknown) => void }): JSX.Element {
+  const host = usePluginHost();
+  const hostRef = useHostRef(host);
+  const { t } = host;
+  const [query, setQuery] = useState('');
+  const [found, setFound] = useState<Mention[]>([]);
+  useEffect(() => {
+    if (query.trim() === '') {
+      setFound([]);
+      return;
+    }
+    let live = true;
+    const timer = setTimeout(() => {
+      hostRef.current.post<Mention[]>('mentions', { ...(destination ? { destination } : {}), query }).then(
+        (next) => {
+          if (live) setFound(next);
+        },
+        (cause) => {
+          if (live) onProblem(cause);
+        },
+      );
+    }, 250);
+    return () => {
+      live = false;
+      clearTimeout(timer);
+    };
+    // onProblem is a fresh function each render, and a search only follows what was typed
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hostRef, destination, query]);
+  return (
+    <Stack gap="xs">
+      {chosen.length > 0 && (
+        <Row gap="xs" wrap>
+          {chosen.map((held) => (
+            <Button key={`${held.kind}:${held.id}`} size="sm" aria-label={t('mentionRemove', { name: held.name })} onClick={() => onChange(chosen.filter((other) => other !== held))}>
+              {`@${held.name} ×`}
+            </Button>
+          ))}
+        </Row>
+      )}
+      <Input aria-label={t('mentionTitle')} placeholder={t('mentionPlaceholder')} value={query} data-testid="publish-mention" onChange={(event: { target: HTMLInputElement }) => setQuery(event.target.value)} />
+      {found.length > 0 && (
+        <Row gap="xs" wrap>
+          {found
+            .filter((held) => !chosen.some((other) => other.kind === held.kind && other.id === held.id))
+            .map((held) => (
+              <Button
+                key={`${held.kind}:${held.id}`}
+                size="sm"
+                onClick={() => {
+                  onChange([...chosen, held]);
+                  setQuery('');
+                }}
+              >
+                {held.kind === 'person' ? held.name : `${held.name} (${t(held.kind === 'tag' ? 'mentionTag' : 'mentionChannel')})`}
+              </Button>
+            ))}
+        </Row>
+      )}
+    </Stack>
+  );
+}
+
 function PublishDialog({ service, mentionable, MessagePreview }: { service: string; mentionable: boolean; MessagePreview: (props: { message: string }) => JSX.Element }): JSX.Element | null {
   const host = usePluginHost();
   const hostRef = useHostRef(host);
@@ -104,8 +170,6 @@ function PublishDialog({ service, mentionable, MessagePreview }: { service: stri
   // what the person chose for a first post, null until they touch it, which leaves the channel's last choice
   const [properties, setProperties] = useState<string[] | null>(null);
   const [mentions, setMentions] = useState<Mention[] | null>(null);
-  const [query, setQuery] = useState('');
-  const [found, setFound] = useState<Mention[]>([]);
 
   useEffect(() => {
     openDialog = (file, chosen) => {
@@ -115,8 +179,6 @@ function PublishDialog({ service, mentionable, MessagePreview }: { service: stri
       setProblem(null);
       setProperties(null);
       setMentions(null);
-      setQuery('');
-      setFound([]);
     };
     return () => {
       openDialog = null;
@@ -150,28 +212,6 @@ function PublishDialog({ service, mentionable, MessagePreview }: { service: stri
       live = false;
     };
   }, [hostRef, target, destination, properties]);
-
-  useEffect(() => {
-    if (!destination || query.trim() === '') {
-      setFound([]);
-      return;
-    }
-    let live = true;
-    const timer = setTimeout(() => {
-      hostRef.current.post<Mention[]>('mentions', { destination, query }).then(
-        (next) => {
-          if (live) setFound(next);
-        },
-        (cause) => {
-          if (live) setProblem(reason(cause));
-        },
-      );
-    }, 250);
-    return () => {
-      live = false;
-      clearTimeout(timer);
-    };
-  }, [hostRef, destination, query]);
 
   if (!target) return null;
   const first = plan?.first;
@@ -263,34 +303,7 @@ function PublishDialog({ service, mentionable, MessagePreview }: { service: stri
                 </Text>
                 {first.can_mention ? (
                   <>
-                    {chosenMentions.length > 0 && (
-                      <Row gap="xs" wrap>
-                        {chosenMentions.map((held) => (
-                          <Button key={`${held.kind}:${held.id}`} size="sm" aria-label={t('mentionRemove', { name: held.name })} onClick={() => setMentions(chosenMentions.filter((other) => other !== held))}>
-                            {`@${held.name} ×`}
-                          </Button>
-                        ))}
-                      </Row>
-                    )}
-                    <Input aria-label={t('mentionTitle')} placeholder={t('mentionPlaceholder')} value={query} data-testid="publish-mention" onChange={(event: { target: HTMLInputElement }) => setQuery(event.target.value)} />
-                    {found.length > 0 && (
-                      <Row gap="xs" wrap>
-                        {found
-                          .filter((held) => !chosenMentions.some((other) => other.kind === held.kind && other.id === held.id))
-                          .map((held) => (
-                            <Button
-                              key={`${held.kind}:${held.id}`}
-                              size="sm"
-                              onClick={() => {
-                                setMentions([...chosenMentions, held]);
-                                setQuery('');
-                              }}
-                            >
-                              {held.kind === 'person' ? held.name : `${held.name} (${t(held.kind === 'tag' ? 'mentionTag' : 'mentionChannel')})`}
-                            </Button>
-                          ))}
-                      </Row>
-                    )}
+                    <MentionPicker destination={destination} chosen={chosenMentions} onChange={setMentions} onProblem={(cause) => setProblem(reason(cause))} />
                     <Text size="sm" tone="muted" block>
                       {t('mentionHint')}
                     </Text>
@@ -426,6 +439,39 @@ function PublishedView({ service }: { service: string }): JSX.Element {
 
 export type SignIn = (props: { account: Account | null; reload: () => void }) => JSX.Element;
 
+function MentionDefaults({ channels, canMention }: { channels: number; canMention: boolean }): JSX.Element | null {
+  const host = usePluginHost();
+  const hostRef = useHostRef(host);
+  const { t } = host;
+  const [chosen, setChosen] = useState<Mention[] | null>(null);
+  useEffect(() => {
+    hostRef.current.get<{ default_mentions: Mention[] }>('options').then(
+      (options) => setChosen(options.default_mentions),
+      (cause) => hostRef.current.toast(t('failed'), 'error', reason(cause)),
+    );
+  }, [hostRef, t]);
+  if (!chosen) return null;
+  const save = (next: Mention[]): void => {
+    setChosen(next);
+    host.post('options', { name: 'default_mentions', value: next }).catch((cause: unknown) => host.toast(t('failed'), 'error', reason(cause)));
+  };
+  return (
+    <Card>
+      <SettingsHead>{t('defaultMentions')}</SettingsHead>
+      <Text size="sm" tone="muted" block>
+        {t('defaultMentionsHint')}
+      </Text>
+      {canMention && channels > 0 ? (
+        <MentionPicker chosen={chosen} onChange={save} onProblem={(cause) => host.toast(t('failed'), 'error', reason(cause))} />
+      ) : (
+        <Text size="sm" tone="faint" block>
+          {t(canMention ? 'defaultMentionsNoChannel' : 'defaultMentionsSignIn')}
+        </Text>
+      )}
+    </Card>
+  );
+}
+
 function ReplySettings(): JSX.Element | null {
   const host = usePluginHost();
   const hostRef = useHostRef(host);
@@ -476,7 +522,7 @@ function ReplySettings(): JSX.Element | null {
   );
 }
 
-function PublishSettings({ SignIn, linkNamesChannel }: { SignIn: SignIn; linkNamesChannel: boolean }): JSX.Element {
+function PublishSettings({ SignIn, linkNamesChannel, mentionable }: { SignIn: SignIn; linkNamesChannel: boolean; mentionable: boolean }): JSX.Element {
   const host = usePluginHost();
   const hostRef = useHostRef(host);
   const { t } = host;
@@ -566,6 +612,7 @@ function PublishSettings({ SignIn, linkNamesChannel }: { SignIn: SignIn; linkNam
           </Button>
         </Row>
       </Card>
+      {mentionable && <MentionDefaults channels={destinations.length} canMention={account?.can_mention === true} />}
       <ReplySettings />
     </Stack>
   );
@@ -609,7 +656,7 @@ export function publishPage({ name, service, strings, SignIn, Icon, MessagePrevi
       },
     ],
     layer: () => <PublishDialog service={service} mentionable={mentionable} MessagePreview={MessagePreview} />,
-    settings: () => <PublishSettings SignIn={SignIn} linkNamesChannel={linkNamesChannel} />,
-    settingsDrawn: ['destinations', 'reply', 'reply_min_chars'],
+    settings: () => <PublishSettings SignIn={SignIn} linkNamesChannel={linkNamesChannel} mentionable={mentionable} />,
+    settingsDrawn: ['destinations', 'reply', 'reply_min_chars', ...(mentionable ? ['default_mentions'] : [])],
   };
 }

@@ -332,7 +332,7 @@ export interface Channel {
   channel: string;
 }
 
-export type Mention = { kind: 'person' | 'tag' | 'channel'; id: string; name: string };
+export type Mention = { kind: 'person' | 'tag' | 'channel'; id: string; name: string; scope?: string };
 
 export interface Graph {
   post(channel: Channel, html: string, mentions?: Mention[]): Promise<{ id: string; url: string | null }>;
@@ -420,7 +420,7 @@ export function graph(accessToken: string, wait: (ms: number) => Promise<void> =
         ...here,
         ...list(tags)
           .filter((tag) => String(tag['displayName'] ?? '').toLowerCase().includes(wanted))
-          .map((tag): Mention => ({ kind: 'tag', id: String(tag['id']), name: String(tag['displayName']) })),
+          .map((tag): Mention => ({ kind: 'tag', id: String(tag['id']), name: String(tag['displayName']), scope: channel.team })),
         ...list(people).map((person): Mention => ({ kind: 'person', id: String(person['id']), name: String(person['displayName']) })),
       ];
     },

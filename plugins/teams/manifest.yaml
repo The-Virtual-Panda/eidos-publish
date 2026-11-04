@@ -2,7 +2,7 @@
 name: teams
 title: Publish to Microsoft Teams
 description: "Publish a blueprint or a top-level doc to a Microsoft Teams channel as one message, edited in place when the file changes, signed in as you and only when you ask"
-version: 0.2.0
+version: 0.2.1
 min_host: 0.18.0
 settings:
   - name: destinations
@@ -10,6 +10,11 @@ settings:
     scope: root
     default: []
     meaning: 'the channels this root publishes to: each a name and the channel read from its link'
+  - name: default_mentions
+    type: structured
+    scope: root
+    default: []
+    meaning: who each first post in this project mentions unless the person changes it
   - name: reply
     type: checkbox
     scope: root

@@ -18,8 +18,7 @@ export interface Destination {
   channel_name: string;
   // what says it is the same channel as a message was sent to
   key: string;
-  // who a first post here mentions and what it shares, as they were last chosen
-  mentions?: Mention[];
+  // what a first post here shares, as it was last chosen
   properties?: string[];
   [field: string]: unknown;
 }
@@ -29,6 +28,8 @@ export interface Mention {
   kind: 'person' | 'tag' | 'channel';
   id: string;
   name: string;
+  // what it only means inside: a tag's team
+  scope?: string;
 }
 
 export interface Account {
@@ -67,6 +68,8 @@ export interface Provider {
   // a person posts as themselves, so a refused edit may be someone else's message
   // who can be mentioned, found by what a person types; a service that cannot mention leaves this out
   searchMentions?(destination: Destination, query: string): Promise<Mention[]>;
+  // whether a mention means anything in this channel: a team's tag does only in that team
+  mentionFits?(destination: Destination, mention: Mention): boolean;
   postsAsPerson: boolean;
   sender(): Promise<Sender>;
   logout(): boolean;
@@ -248,6 +251,13 @@ export function openFile(host: Host, provider: Provider, ref: string, chosen: st
 
 const sizeOf = (provider: Provider, message: string): number => (provider.limitUnit === 'bytes' ? Buffer.byteLength(message, 'utf8') : message.length);
 
+// Who a project's first posts mention unless the person changes it.
+export function defaultMentions(host: Host, provider: Provider): Mention[] {
+  if (!provider.searchMentions) return [];
+  const held = host.settings().get<unknown>('default_mentions');
+  return Array.isArray(held) ? (held as Mention[]) : [];
+}
+
 // The decision, from the root and this machine alone (REQ5): what a dry run prints and what a publish carries out.
 export function planFor(host: Host, provider: Provider, ref: string, name: string, options: PlanOptions = {}): Plan {
   const destination = destinationNamed(host, provider, name);
@@ -262,7 +272,7 @@ export function planFor(host: Host, provider: Provider, ref: string, name: strin
     const count = (value: number): string => `${value.toLocaleString('en-US')} ${provider.limitUnit}`;
     return { ...base, action: 'refused', reason: `The message is ${count(size)} and ${provider.service} allows ${count(provider.limit)}, so nothing is sent. Shorten the file.` };
   }
-  const first = { properties: file.properties, chosen, mentions: options.mentions ?? destination.mentions ?? [], can_mention: provider.searchMentions !== undefined && provider.account()?.can_mention !== false };
+  const first = { properties: file.properties, chosen, mentions: options.mentions ?? defaultMentions(host, provider).filter((mention) => provider.mentionFits?.(destination, mention) ?? true), can_mention: provider.searchMentions !== undefined && provider.account()?.can_mention !== false };
   if (!sent) return { ...base, action: 'post', first, reason: 'It has not been published here yet.' };
   if (sent.channel !== destination.key) return { ...base, action: 'post', first, url: null, reason: `${destination.name} now points at another channel, so it takes a new message.` };
   const current = sent.digest === digest(file.message);
@@ -327,8 +337,8 @@ export async function carryOut(host: Host, provider: Provider, ref: string, name
       throw failure(plan, cause);
     }
     await keep(posted.id, posted.url);
-    if (firstPost && (options.mentions || options.properties)) {
-      const held = destinations(host).map((entry) => (entry.name === destination.name ? { ...entry, mentions, properties } : entry));
+    if (firstPost && options.properties) {
+      const held = destinations(host).map((entry) => (entry.name === destination.name ? { ...entry, properties } : entry));
       await host.settings().set('destinations', held);
     }
     return { ...done, outcome, reason, message_id: posted.id, url: posted.url, replied: false };

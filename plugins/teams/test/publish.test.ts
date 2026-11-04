@@ -100,7 +100,7 @@ test('a first post mentions who was chosen, an edit keeps them, and a reply name
   const name = await destination();
   writeDoc('# Overview\n\nFirst words.\n');
   const found = await sandbox.route<Array<{ kind: string; id: string; name: string }>>('POST', 'mentions', { body: { destination: name, query: 'project' } });
-  assert.deepEqual(found, [{ kind: 'tag', id: 'tag-1', name: 'Project Managers' }]);
+  assert.deepEqual(found, [{ kind: 'tag', id: 'tag-1', name: 'Project Managers', scope: '11111111-2222-3333-4444-555555555555' }]);
   const people = await sandbox.route<Array<{ kind: string; name: string }>>('POST', 'mentions', { body: { destination: name, query: 'janelle' } });
   assert.deepEqual(people.map((held) => held.name), ['Janelle Reyes']);
   assert.doesNotMatch(fake.lookups.join(), /no consistency level/);
@@ -124,10 +124,32 @@ test('a first post mentions who was chosen, an edit keeps them, and a reply name
   assert.match(fake.graph[1]?.path ?? '', /replies$/);
   assert.equal(fake.graph[1]?.body.mentions, undefined);
 
-  const next = (JSON.parse(await ok(['destinations', '--json'])) as Array<{ name: string; mentions?: unknown[] }>).find((held) => held.name === name);
-  assert.equal(next?.mentions?.length, 3, 'the channel remembers them for its next first post');
   writeDoc('# Overview\n\nFirst words.\n');
   await assert.rejects(run(['publish', DOC, '--to', name, '--mention', 'Nobody']).then((result) => (result.status === 0 ? null : Promise.reject(new Error(result.stderr)))), /Nobody/);
+});
+
+test('a project default starts each first post, can be changed, and leaves out a tag of another team', async () => {
+  await signIn(true);
+  const name = await destination();
+  const [tag] = await sandbox.route<Array<{ kind: string; id: string; name: string; scope: string }>>('POST', 'mentions', { body: { query: 'project' } });
+  assert.equal(tag?.scope, '11111111-2222-3333-4444-555555555555');
+  const person = { kind: 'person', id: 'user-1', name: 'Janelle Reyes' };
+  await sandbox.route('POST', 'options', { body: { name: 'default_mentions', value: [tag, person] } });
+  writeDoc('# Overview\n\nFirst words.\n');
+  const plan = await sandbox.route<{ first: { mentions: Array<{ name: string }> } }>('POST', 'plan', { body: { file: DOC, destination: name } });
+  assert.deepEqual(plan.first.mentions.map((held) => held.name), ['Project Managers', 'Janelle Reyes']);
+
+  const elsewhere = 'other-team';
+  await ok(['connect', elsewhere, '--channel', 'https://teams.microsoft.com/l/channel/19%3Aelse%40thread.tacv2/Else?groupId=99999999-2222-3333-4444-555555555555']);
+  const there = await sandbox.route<{ first: { mentions: Array<{ name: string }> } }>('POST', 'plan', { body: { file: DOC, destination: elsewhere } });
+  assert.deepEqual(there.first.mentions.map((held) => held.name), ['Janelle Reyes'], 'the tag means nothing in another team');
+  await ok(['disconnect', elsewhere]);
+
+  fake.graph.length = 0;
+  await sandbox.route('POST', 'publish', { body: { file: DOC, destination: name, mentions: [person] } });
+  assert.equal(fake.graph[0]?.body.mentions?.length, 1, 'what the person chose wins');
+  assert.equal((await sandbox.route<{ default_mentions: unknown[] }>('GET', 'options')).default_mentions.length, 2, 'changing it for one post leaves the default');
+  await sandbox.route('POST', 'options', { body: { name: 'default_mentions', value: [] } });
 });
 
 test('a plain sign-in mentions people and the channel with no administrator, and tags come with the approval', async () => {

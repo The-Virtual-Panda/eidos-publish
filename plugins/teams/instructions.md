@@ -31,8 +31,8 @@ Every post, edit, and reply reaches real people, under the person's name. Never 
 
 ### Mentions and shared properties
 
-On a first post a person chooses who to mention and which frontmatter properties to share, in the Publish dialog or with `--mention` and `--property`. A plain sign-in mentions people and the channel; tags take the administrator's approval that `--edit` asks for. A name that matches nobody stops the publish, so nothing goes out mentioning no one. The channel remembers the last choice, and a shared property stays on that message's later edits. Replies mention nobody and name the list items and properties that changed.
+On a first post a person chooses who to mention and which frontmatter properties to share, in the Publish dialog or with `--mention` and `--property`. A plain sign-in mentions people and the channel; tags take the administrator's approval that `--edit` asks for. A name that matches nobody stops the publish, so nothing goes out mentioning no one. The plugin's settings hold who a project mentions by default (`default_mentions`), which a person can change when they publish; automations use it as it stands. A team's tag is left out of a channel in another team. The channel remembers the last properties chosen, and a shared property stays on that message's later edits. Replies mention nobody and name the list items and properties that changed.
 
 ### Automations
 
-The step **Publish to Teams** (`teams.publish`) publishes the file that started the run, or a named one, to a channel, with the channel's remembered mentions and properties. The first run to reach it asks, since it leaves this machine. If someone else posted the message it stops unless the step says to post a second one.
+The step **Publish to Teams** (`teams.publish`) publishes the file that started the run, or a named one, to a channel, with the project's default mentions and the channel's remembered properties. The first run to reach it asks, since it leaves this machine. If someone else posted the message it stops unless the step says to post a second one.
