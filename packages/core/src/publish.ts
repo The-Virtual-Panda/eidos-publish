@@ -10,7 +10,7 @@ import type { Host } from 'eidosmd/plugin';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 import { changeBetween, replyLines, worthReplying } from './change.ts';
 import { ProviderError } from './errors.ts';
-import { digest, parse, plainText, type Parsed } from './render.ts';
+import { digest, parse, plainText, propertiesOf, type Parsed, type Property } from './render.ts';
 
 export interface Destination {
   name: string;
@@ -18,18 +18,31 @@ export interface Destination {
   channel_name: string;
   // what says it is the same channel as a message was sent to
   key: string;
+  // who a first post here mentions and what it shares, as they were last chosen
+  mentions?: Mention[];
+  properties?: string[];
   [field: string]: unknown;
+}
+
+// Someone a message notifies: a person, a tag of the team, or the channel itself.
+export interface Mention {
+  kind: 'person' | 'tag' | 'channel';
+  id: string;
+  name: string;
 }
 
 export interface Account {
   name: string;
   detail: string;
   can_edit: boolean;
+  // false when this sign-in predates the permissions mentions take
+  can_mention?: boolean;
 }
 
 export interface Sender {
-  post(destination: Destination, message: string): Promise<{ id: string; url: string | null }>;
-  edit(destination: Destination, id: string, message: string): Promise<void>;
+  post(destination: Destination, message: string, mentions: Mention[]): Promise<{ id: string; url: string | null }>;
+  // a message keeps its mentions through an edit, since an edit that left them out would strip them
+  edit(destination: Destination, id: string, message: string, mentions: Mention[]): Promise<void>;
   reply(destination: Destination, id: string, message: string): Promise<void>;
 }
 
@@ -52,8 +65,8 @@ export interface Provider {
   cannotEdit: string;
   signIn: string;
   // a person posts as themselves, so a refused edit may be someone else's message
-  // settings a person fills in as words on the plugin's page, beside the ones every plugin has
-  textSettings?: string[];
+  // who can be mentioned, found by what a person types; a service that cannot mention leaves this out
+  searchMentions?(destination: Destination, query: string): Promise<Mention[]>;
   postsAsPerson: boolean;
   sender(): Promise<Sender>;
   logout(): boolean;
@@ -68,6 +81,8 @@ export interface Sent {
   text: string;
   at: string;
   by: string;
+  mentions?: Mention[];
+  properties?: string[];
 }
 
 type Published = Record<string, Record<string, Sent>>;
@@ -80,6 +95,7 @@ export interface OpenFile {
   kind: 'blueprint' | 'doc';
   message: string;
   plain: string;
+  properties: Property[];
 }
 
 export type Action = 'post' | 'edit' | 'repost' | 'none' | 'refused';
@@ -97,6 +113,8 @@ export interface Plan {
   url: string | null;
   // who posted the message, when sending would duplicate it, which the person confirms with `takeOver`
   posted_by_other?: string;
+  // on a first post, what a person chooses: everything the file can share, and what is chosen so far
+  first?: { properties: Property[]; chosen: string[]; mentions: Mention[]; can_mention: boolean };
 }
 
 export interface Done {
@@ -115,6 +133,9 @@ export interface PlanOptions {
   force?: boolean;
   noReply?: boolean;
   takeOver?: boolean;
+  // chosen for a first post, and kept for that message and the channel's next one
+  properties?: string[];
+  mentions?: Mention[];
 }
 
 export interface StatusRow {
@@ -191,7 +212,7 @@ export function destinations(host: Host): Destination[] {
   return Array.isArray(held) ? (held as Destination[]) : [];
 }
 
-function destinationNamed(host: Host, provider: Provider, name: string): Destination {
+export function destinationNamed(host: Host, provider: Provider, name: string): Destination {
   const found = destinations(host).find((destination) => destination.name.toLowerCase() === name.trim().toLowerCase());
   if (found) return found;
   const names = destinations(host).map((destination) => destination.name);
@@ -199,7 +220,7 @@ function destinationNamed(host: Host, provider: Provider, name: string): Destina
 }
 
 // A blueprint by its id or path, or a top-level doc by its path: nothing else publishes.
-export function openFile(host: Host, provider: Provider, ref: string): OpenFile {
+export function openFile(host: Host, provider: Provider, ref: string, chosen: string[] = []): OpenFile {
   const context = host.context();
   const asPath = path.resolve(context.cwd, ref);
   const wanted = ref.trim().toLowerCase();
@@ -207,8 +228,9 @@ export function openFile(host: Host, provider: Provider, ref: string): OpenFile 
   if (blueprint) {
     const id = blueprint.properties?.['id'];
     const title = blueprint.properties?.['title'];
-    const parsed = parse(readFileSync(blueprint.path, 'utf8'), blueprint.stem, typeof title === 'string' ? title : undefined);
-    return { key: typeof id === 'string' && id ? id : blueprint.rel, rel: blueprint.rel, title: parsed.title, kind: 'blueprint', message: provider.render(parsed), plain: plainText(parsed) };
+    const source = readFileSync(blueprint.path, 'utf8');
+    const parsed = parse(source, blueprint.stem, typeof title === 'string' ? title : undefined, chosen);
+    return { key: typeof id === 'string' && id ? id : blueprint.rel, rel: blueprint.rel, title: parsed.title, kind: 'blueprint', properties: propertiesOf(source), message: provider.render(parsed), plain: plainText(parsed) };
   }
   // a top-level doc is declared relative to the framework document, and kept under its path from the root
   const inRoot = path.resolve(context.root, ref);
@@ -217,8 +239,9 @@ export function openFile(host: Host, provider: Provider, ref: string): OpenFile 
     const rel = path.relative(context.root, file).split(path.sep).join('/');
     if (file !== asPath && file !== inRoot && rel.toLowerCase() !== wanted) continue;
     if (!existsSync(file)) throw new ProviderError(`The top-level doc ${rel} is declared and has no file yet.`, null);
-    const parsed = parse(readFileSync(file, 'utf8'), path.basename(file, '.md'), doc.title);
-    return { key: rel, rel, title: parsed.title, kind: 'doc', message: provider.render(parsed), plain: plainText(parsed) };
+    const source = readFileSync(file, 'utf8');
+    const parsed = parse(source, path.basename(file, '.md'), doc.title, chosen);
+    return { key: rel, rel, title: parsed.title, kind: 'doc', properties: propertiesOf(source), message: provider.render(parsed), plain: plainText(parsed) };
   }
   throw new ProviderError(`${ref} is not a blueprint or a top-level doc of this root. Only those publish.`, null);
 }
@@ -227,17 +250,21 @@ const sizeOf = (provider: Provider, message: string): number => (provider.limitU
 
 // The decision, from the root and this machine alone (REQ5): what a dry run prints and what a publish carries out.
 export function planFor(host: Host, provider: Provider, ref: string, name: string, options: PlanOptions = {}): Plan {
-  const file = openFile(host, provider, ref);
   const destination = destinationNamed(host, provider, name);
-  const sent = readPublished(host)[file.key]?.[destination.name];
+  const key = openFile(host, provider, ref).key;
+  const sent = readPublished(host)[key]?.[destination.name];
+  const firstPost = !sent || sent.channel !== destination.key;
+  const chosen = firstPost ? (options.properties ?? destination.properties ?? []) : (sent.properties ?? []);
+  const file = openFile(host, provider, ref, chosen);
   const size = sizeOf(provider, file.message);
   const base = { file: file.key, title: file.title, destination: destination.name, message: file.message, size, limit: provider.limit, reply: null, url: sent?.url ?? null };
   if (size > provider.limit) {
     const count = (value: number): string => `${value.toLocaleString('en-US')} ${provider.limitUnit}`;
     return { ...base, action: 'refused', reason: `The message is ${count(size)} and ${provider.service} allows ${count(provider.limit)}, so nothing is sent. Shorten the file.` };
   }
-  if (!sent) return { ...base, action: 'post', reason: 'It has not been published here yet.' };
-  if (sent.channel !== destination.key) return { ...base, action: 'post', url: null, reason: `${destination.name} now points at another channel, so it takes a new message.` };
+  const first = { properties: file.properties, chosen, mentions: options.mentions ?? destination.mentions ?? [], can_mention: provider.searchMentions !== undefined && provider.account()?.can_mention !== false };
+  if (!sent) return { ...base, action: 'post', first, reason: 'It has not been published here yet.' };
+  if (sent.channel !== destination.key) return { ...base, action: 'post', first, url: null, reason: `${destination.name} now points at another channel, so it takes a new message.` };
   const current = sent.digest === digest(file.message);
   const account = provider.account();
   // Only a message's author can edit it, so anything sent here is a second message: the person is told who posted it and says so before it goes.
@@ -270,8 +297,12 @@ const failure = (plan: Plan, cause: unknown, hint = ''): ProviderError =>
 // as it is sent, so a reply that fails afterwards never posts it a second time.
 export async function carryOut(host: Host, provider: Provider, ref: string, name: string, options: PlanOptions = {}): Promise<Done> {
   const plan = planFor(host, provider, ref, name, options);
-  const file = openFile(host, provider, ref);
   const destination = destinationNamed(host, provider, name);
+  const earlier = readPublished(host)[openFile(host, provider, ref).key]?.[destination.name];
+  const firstPost = plan.first !== undefined;
+  const mentions = plan.first?.mentions ?? earlier?.mentions ?? [];
+  const properties = plan.first?.chosen ?? earlier?.properties ?? [];
+  const file = openFile(host, provider, ref, properties);
   const done = { file: plan.file, destination: plan.destination, reason: plan.reason };
   if (plan.action === 'refused') throw new ProviderError(`${plan.destination}: ${plan.file}: ${plan.reason}`, null);
   if (plan.posted_by_other && !options.takeOver) throw new ProviderError(`${plan.destination}: ${plan.file}: ${plan.reason} Publish with --take-over to post it anyway.`, null);
@@ -285,24 +316,28 @@ export async function carryOut(host: Host, provider: Provider, ref: string, name
   }
   const by = host.actingUser()?.alias ?? provider.account()?.name ?? '';
   const keep = async (id: string, url: string | null): Promise<void> => {
-    await record(host, file.key, destination.name, { message_id: id, channel: destination.key, url, digest: digest(file.message), text: packText(file.plain), at: new Date().toISOString(), by });
+    await record(host, file.key, destination.name, { message_id: id, channel: destination.key, url, digest: digest(file.message), text: packText(file.plain), at: new Date().toISOString(), by, ...(mentions.length > 0 ? { mentions } : {}), ...(properties.length > 0 ? { properties } : {}) });
     host.emit('changed', { file: file.key, destination: destination.name });
   };
   const postNew = async (outcome: 'posted' | 'reposted' | 'replaced', reason: string): Promise<Done> => {
     let posted;
     try {
-      posted = await sender.post(destination, file.message);
+      posted = await sender.post(destination, file.message, firstPost ? mentions : []);
     } catch (cause) {
       throw failure(plan, cause);
     }
     await keep(posted.id, posted.url);
+    if (firstPost && (options.mentions || options.properties)) {
+      const held = destinations(host).map((entry) => (entry.name === destination.name ? { ...entry, mentions, properties } : entry));
+      await host.settings().set('destinations', held);
+    }
     return { ...done, outcome, reason, message_id: posted.id, url: posted.url, replied: false };
   };
   if (plan.action === 'post') return postNew('posted', plan.reason);
   if (plan.action === 'repost') return postNew('reposted', plan.posted_by_other ? `It replaces ${plan.posted_by_other}'s as the message kept here; theirs stays in the channel.` : plan.reason);
   const message = sent!;
   try {
-    await sender.edit(destination, message.message_id, file.message);
+    await sender.edit(destination, message.message_id, file.message, mentions);
   } catch (cause) {
     const status = cause instanceof ProviderError ? cause.status : null;
     if (status === 404 || status === 410) return postNew('replaced', `The message was gone from ${provider.service}, so a new one took its place.`);

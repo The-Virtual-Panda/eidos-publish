@@ -15,7 +15,7 @@ const idToken = `x.${Buffer.from(JSON.stringify({ name: 'Ada Test', preferred_us
 export interface FakeMicrosoft {
   address: string;
   // every Graph request, in order
-  graph: Array<{ method: string; path: string; body: { body: { contentType: string; content: string } } }>;
+  graph: Array<{ method: string; path: string; body: { body: { contentType: string; content: string }; mentions?: Array<{ id: number; mentionText: string; mentioned: Record<string, Record<string, string>> }> } }>;
   messages: Map<string, string>;
   // what the next Graph requests answer, consumed one by one; empty, they succeed
   failNext: Array<{ status: number; retryAfter?: string; message?: string }>;
@@ -25,6 +25,7 @@ export interface FakeMicrosoft {
   authorizes: Array<Record<string, string>>;
   authorizeAnswers: Array<Record<string, string>>;
   forms: Array<Record<string, string>>;
+  lookups: string[];
   // how many replies to refuse next, whatever else succeeds
   failReplies: number;
   close(): Promise<void>;
@@ -41,6 +42,7 @@ export async function startFakeMicrosoft(port = 0): Promise<FakeMicrosoft> {
     authorizes: [],
     authorizeAnswers: [],
     forms: [],
+    lookups: [],
     failReplies: 0,
     close: () => new Promise((resolve) => server.close(() => resolve())),
   };
@@ -85,12 +87,17 @@ export async function startFakeMicrosoft(port = 0): Promise<FakeMicrosoft> {
         if (answer) return send(response, answer.status, answer.body);
         const scope = (form['scope'] ?? [...state.forms].reverse().find((held) => held['scope'])?.['scope'] ?? '')
           .split(' ')
-          .filter((held) => held.includes('ChannelMessage'))
+          .filter((held) => /ChannelMessage|TeamworkTag|User\.ReadBasic/.test(held))
           .join(' ');
         return send(response, 200, { access_token: ACCESS, refresh_token: form['grant_type'] === 'refresh_token' ? REFRESH_ROTATED : REFRESH, scope, id_token: idToken });
       }
       const body = (text ? JSON.parse(text) : {}) as FakeMicrosoft['graph'][number]['body'];
       assertBearer(request);
+      if (request.method === 'GET' && url.pathname.endsWith('/tags')) return send(response, 200, { value: [{ id: 'tag-1', displayName: 'Project Managers' }, { id: 'tag-2', displayName: 'Designers' }] });
+      if (request.method === 'GET' && url.pathname.endsWith('/users')) {
+        state.lookups.push(request.headers.consistencylevel === 'eventual' ? url.search : `no consistency level: ${url.search}`);
+        return send(response, 200, { value: url.searchParams.get('$search')?.includes('janelle') ? [{ id: 'user-1', displayName: 'Janelle Reyes', mail: 'janelle@example.com' }] : [] });
+      }
       state.graph.push({ method: request.method ?? '', path: url.pathname, body });
       const fail = state.failNext.shift();
       if (fail) {

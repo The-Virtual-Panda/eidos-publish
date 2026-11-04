@@ -2,12 +2,12 @@
 // and the sign-in, in the browser or with a device code. Built as a CommonJS bundle whose one import from the
 // CLI is `eidosmd/plugin`.
 import type { CliEntry, Host } from 'eidosmd/plugin';
-import { action, print, publishApi, registerPublish, type PublishApi } from '../../../packages/core/src/commands.ts';
+import { action, automationSteps, print, publishApi, registerPublish, type PublishApi } from '../../../packages/core/src/commands.ts';
 import { credentials } from '../../../packages/core/src/credentials.ts';
 import { ProviderError } from '../../../packages/core/src/errors.ts';
 import { destinations, type Account, type Provider } from '../../../packages/core/src/publish.ts';
 import { teamsHtml } from './html.ts';
-import { canEdit, DEFAULT_CLIENT_ID, graph, openInBrowser, permissionsFor, pollDeviceCode, readChannelLink, refresh, startBrowserSignIn, startDeviceCode, TEAMS_LIMIT_BYTES, type Channel, type Poll, type Sign } from './microsoft.ts';
+import { canEdit, canMention, canMentionTags, DEFAULT_CLIENT_ID, graph, openInBrowser, permissionsFor, pollDeviceCode, readChannelLink, refresh, startBrowserSignIn, startDeviceCode, TEAMS_LIMIT_BYTES, type Channel, type Graph, type Poll, type Sign } from './microsoft.ts';
 
 interface TeamsSignIn {
   refresh_token: string;
@@ -35,17 +35,16 @@ const entry: CliEntry = {
     const held = credentials<TeamsSignIn>('teams');
     const accountOf = (signIn: TeamsSignIn): Account => {
       const editing = canEdit(signIn.scopes);
-      return { name: signIn.name || signIn.username, detail: editing ? 'can edit messages' : 'posts and replies only', can_edit: editing };
+      return { name: signIn.name || signIn.username, detail: editing ? 'can edit messages' : 'posts and replies only', can_edit: editing, can_mention: canMention(signIn.scopes) };
     };
-    const clientId = (): string => {
-      const id = String(host.settings().get<string>('client_id') ?? '').trim() || DEFAULT_CLIENT_ID;
-      if (!id) throw new ProviderError("No Microsoft Entra app is set. Set your organization's with `eidos plugin set teams client_id <id>`.", null);
-      return id;
-    };
-    const signFor = (permissions: string[], id: string): Sign => {
-      const tenant = String(host.settings().get<string>('tenant') ?? '').trim();
+    const signFor = (permissions: string[]): Sign => {
       const known = destinations(host).find((destination) => destination['tenant'])?.['tenant'] as string | undefined;
-      return { clientId: id, tenant: tenant || 'organizations', permissions, ...(tenant || !known ? {} : { consentTenant: known }) };
+      return { clientId: DEFAULT_CLIENT_ID, tenant: 'organizations', permissions, ...(known ? { consentTenant: known } : {}) };
+    };
+    const signedIn = async (signIn: TeamsSignIn): Promise<Graph> => {
+      const tokens = await refresh(signFor(signIn.scopes), signIn.refresh_token);
+      if (tokens.refresh_token !== signIn.refresh_token) held.set({ ...signIn, refresh_token: tokens.refresh_token });
+      return graph(tokens.access_token);
     };
 
     const provider: Provider = {
@@ -67,21 +66,23 @@ const entry: CliEntry = {
       cannotEdit: 'Your sign-in cannot edit messages, so this posts a new one and the old one stays. Run `eidos teams login --edit` to edit in place; your administrator must approve it.',
       signIn: 'Sign in with `eidos teams login --edit` to send it.',
       postsAsPerson: true,
-      textSettings: ['client_id', 'tenant'],
       sender: async () => {
         const signIn = held.get();
         if (!signIn) throw new ProviderError('You are not signed in to Teams. Run `eidos teams login`.', null);
-        const id = clientId();
-        if (signIn.client_id !== id) throw new ProviderError('This root now signs in with another Entra app. Run `eidos teams login` again.', null);
-        const tokens = await refresh(signFor(signIn.scopes, id), signIn.refresh_token);
-        if (tokens.refresh_token !== signIn.refresh_token) held.set({ ...signIn, refresh_token: tokens.refresh_token });
-        const client = graph(tokens.access_token);
+        const client = await signedIn(signIn);
         const channel = (destination: { [field: string]: unknown }): Channel => ({ team: String(destination['team']), channel: String(destination['channel']) });
         return {
-          post: (destination, message) => client.post(channel(destination), message),
-          edit: (destination, id, message) => client.edit(channel(destination), id, message),
+          post: (destination, message, mentions) => client.post(channel(destination), message, mentions),
+          edit: (destination, id, message, mentions) => client.edit(channel(destination), id, message, mentions),
           reply: (destination, id, message) => client.reply(channel(destination), id, message),
         };
+      },
+      searchMentions: async (destination, query) => {
+        const signIn = held.get();
+        if (!signIn) throw new ProviderError('You are not signed in to Teams. Run `eidos teams login`.', null);
+        if (!canMention(signIn.scopes)) throw new ProviderError('Sign out and sign in to Teams again to mention people and tags.', null);
+        const client = await signedIn(signIn);
+        return client.search({ team: String(destination['team']), channel: String(destination['channel']) }, destination.channel_name, query, canMentionTags(signIn.scopes));
       },
       logout: () => held.drop(),
     };
@@ -90,7 +91,7 @@ const entry: CliEntry = {
     const api: TeamsApi = {
       ...publishApi(host, provider),
       loginStart: async (edit, device = false) => {
-        const sign = signFor(permissionsFor(edit), clientId());
+        const sign = signFor(permissionsFor(edit));
         pending?.close();
         if (device) {
           const code = await startDeviceCode(sign);
@@ -156,7 +157,7 @@ const entry: CliEntry = {
         );
     });
     registerPublish(host, provider, api);
-    return { api };
+    return { api: { ...api, automations: automationSteps(provider, api) } };
   },
 };
 

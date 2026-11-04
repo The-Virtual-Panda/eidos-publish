@@ -6,10 +6,19 @@
 // content is rendered.
 import { createHash } from 'node:crypto';
 import { marked, type Token, type Tokens } from 'marked';
+import { parse as parseYaml } from 'yaml';
+
+export interface Property {
+  name: string;
+  label: string;
+  value: string;
+}
 
 export interface Parsed {
   title: string;
   tokens: Token[];
+  // the frontmatter a person chose to share with this message
+  properties: Property[];
 }
 
 const FRONTMATTER = /^---\r?\n[\s\S]*?\r?\n---[ \t]*(?:\r?\n|$)/;
@@ -30,14 +39,47 @@ export function decodeEntities(text: string): string {
   return text.replace(/&(amp|lt|gt|quot|#39);/g, (_, name: string) => ({ amp: '&', lt: '<', gt: '>', quot: '"', '#39': "'" })[name] ?? '');
 }
 
+const labelOf = (name: string): string => {
+  const words = name.replace(/[_-]+/g, ' ').trim();
+  return words.charAt(0).toUpperCase() + words.slice(1);
+};
+
+const valueOf = (value: unknown): string | null => {
+  if (value === null || value === undefined || value === '') return null;
+  if (Array.isArray(value)) {
+    const items = value.map(valueOf).filter((item) => item !== null);
+    return items.length > 0 ? items.join(', ') : null;
+  }
+  if (typeof value === 'object') return null;
+  return String(value);
+};
+
+// What a file's frontmatter can share: anything with a value a line can show. A title is the message's heading already.
+export function propertiesOf(markdown: string): Property[] {
+  const held = FRONTMATTER.exec(markdown)?.[0].replace(/^---\r?\n/, '').replace(/\r?\n---[ \t]*(?:\r?\n)?$/, '');
+  if (!held) return [];
+  let parsed: unknown;
+  try {
+    parsed = parseYaml(held);
+  } catch {
+    return [];
+  }
+  if (typeof parsed !== 'object' || parsed === null) return [];
+  return Object.entries(parsed as Record<string, unknown>).flatMap(([name, value]) => {
+    const shown = name === 'title' ? null : valueOf(value);
+    return shown === null ? [] : [{ name, label: labelOf(name), value: shown }];
+  });
+}
+
 // The file as a message: its frontmatter gone, its title given or the first
 // heading's, and that heading gone from the body when it only repeats the title.
-export function parse(markdown: string, fallbackTitle: string, givenTitle?: string): Parsed {
+export function parse(markdown: string, fallbackTitle: string, givenTitle?: string, chosen: string[] = []): Parsed {
   const tokens = marked.lexer(markdown.replace(FRONTMATTER, ''), { gfm: true });
   const first = tokens.find((token) => token.type !== 'space' && !(token.type === 'html' && token.raw.replace(COMMENT, '').trim() === ''));
   const opening = first?.type === 'heading' && (first as Tokens.Heading).depth === 1 ? inlineText((first as Tokens.Heading).tokens).trim() : null;
   const title = givenTitle?.trim() || opening || fallbackTitle;
-  return { title, tokens: opening === title ? tokens.filter((token) => token !== first) : tokens };
+  const properties = chosen.length === 0 ? [] : propertiesOf(markdown).filter((property) => chosen.includes(property.name));
+  return { title, tokens: opening === title ? tokens.filter((token) => token !== first) : tokens, properties };
 }
 
 // Only a link a reader can follow stays a link: a blueprint's, a relative path's, or a script's is its text.
@@ -93,6 +135,6 @@ function blocksPlain(tokens: Token[], indent = ''): string[] {
   });
 }
 
-export const plainText = (parsed: Parsed): string => [`# ${parsed.title}`, ...blocksPlain(parsed.tokens)].join('\n');
+export const plainText = (parsed: Parsed): string => [`# ${parsed.title}`, ...parsed.properties.map((property) => `${property.label}: ${property.value}`), ...blocksPlain(parsed.tokens)].join('\n');
 
 export const digest = (message: string): string => `sha256:${createHash('sha256').update(message).digest('hex')}`;

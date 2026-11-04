@@ -3,7 +3,7 @@
 // shipped here. Built as a CommonJS bundle whose one import from the CLI is
 // `eidosmd/plugin`.
 import type { CliEntry, Host } from 'eidosmd/plugin';
-import { action, print, publishApi, registerPublish, type PublishApi } from '../../../packages/core/src/commands.ts';
+import { action, automationSteps, print, publishApi, registerPublish, type PublishApi } from '../../../packages/core/src/commands.ts';
 import { credentials } from '../../../packages/core/src/credentials.ts';
 import { ProviderError } from '../../../packages/core/src/errors.ts';
 import { ask, readLines } from '../../../packages/core/src/prompt.ts';
@@ -101,7 +101,7 @@ const entry: CliEntry = {
         );
     });
     registerPublish(host, provider, api);
-    return { api };
+    return { api: { ...api, automations: automationSteps(provider, api) } };
   },
 };
 

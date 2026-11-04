@@ -8,6 +8,10 @@ export interface Change {
   sections_added: string[];
   sections_removed: string[];
   sections_changed: string[];
+  items_added: string[];
+  items_removed: string[];
+  // a shared property's line, as `Date: before → after`
+  properties_changed: string[];
 }
 
 const HEADING = /^#{1,6} (.*)$/;
@@ -69,12 +73,30 @@ export function measure(before: string, after: string): { added: number; removed
   return { added, removed };
 }
 
+const ITEM = /^\s*(?:[-*+]|\d+[.)])\s+(?:\[[ xX]\]\s+)?(.+)$/;
+const itemsOf = (text: string): string[] => text.split('\n').flatMap((line) => ITEM.exec(line)?.slice(1, 2) ?? []);
+// The lines above the first heading past the title that a person chose to share read `Label: value`.
+const propertyLines = (text: string): Map<string, string> =>
+  new Map(
+    (sections(text)[0]?.body ?? '').split('\n').flatMap((line): Array<[string, string]> => {
+      const match = /^([^:]{1,60}): (.+)$/.exec(line);
+      return match ? [[match[1]!, match[2]!]] : [];
+    }),
+  );
+
 export function changeBetween(before: string, after: string): Change {
   const { added, removed } = measure(before, after);
   const was = sections(before);
   const now = sections(after);
   const named = (list: typeof was, heading: string): (typeof was)[number] | undefined => list.find((section) => section.heading === heading);
+  const withoutProperties = (body: string): string => body.split('\n').filter((line) => !/^[^:]{1,60}: .+$/.test(line)).join('\n');
   return {
+    items_added: itemsOf(after).filter((item) => !itemsOf(before).includes(item)),
+    items_removed: itemsOf(before).filter((item) => !itemsOf(after).includes(item)),
+    properties_changed: [...propertyLines(after)].flatMap(([label, value]) => {
+      const was = propertyLines(before).get(label);
+      return was !== undefined && was !== value ? [`${label}: ${was} → ${value}`] : [];
+    }),
     added_chars: added,
     removed_chars: removed,
     sections_added: now.filter((section) => !named(was, section.heading)).map((section) => section.heading),
@@ -82,17 +104,24 @@ export function changeBetween(before: string, after: string): Change {
     sections_changed: now
       .filter((section) => {
         const held = named(was, section.heading);
-        return held !== undefined && held.body !== section.body;
+        if (held === undefined) return false;
+        // a shared property's change is said as itself, not as a change to the title's section
+        return section === now[0] ? withoutProperties(held.body) !== withoutProperties(section.body) : held.body !== section.body;
       })
       .map((section) => section.heading),
   };
 }
 
 export const worthReplying = (change: Change, minChars: number): boolean =>
-  change.added_chars + change.removed_chars >= minChars || change.sections_added.length > 0 || change.sections_removed.length > 0;
+  change.added_chars + change.removed_chars >= minChars || change.items_added.length > 0 || change.items_removed.length > 0 || change.properties_changed.length > 0 || change.sections_added.length > 0 || change.sections_removed.length > 0;
 
 export function replyLines(change: Change): string[] {
   const line = (label: string, headings: string[]): string[] => (headings.length === 0 ? [] : [`${label}: ${headings.join(', ')}`]);
-  const lines = [...line('Added', change.sections_added), ...line('Removed', change.sections_removed), ...line('Changed', change.sections_changed)];
+  const lines = [
+    ...change.properties_changed,
+    ...line('Added', change.sections_added), ...line('Removed', change.sections_removed), ...line('Changed', change.sections_changed),
+    ...line('Added', change.items_added),
+    ...line('Removed', change.items_removed),
+  ];
   return lines.length > 0 ? lines : ['The text changed.'];
 }

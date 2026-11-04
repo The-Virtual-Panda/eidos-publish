@@ -105,7 +105,7 @@ function blocks(tokens: Token[]): string[] {
   });
 }
 
-export const slackMarkdown = (parsed: Parsed): string => [`# ${escapeText(parsed.title)}`, ...blocks(parsed.tokens)].join('\n\n');
+export const slackMarkdown = (parsed: Parsed): string => [`# ${escapeText(parsed.title)}`, ...(parsed.properties.length === 0 ? [] : [parsed.properties.map((property) => `**${escapeText(property.label)}:** ${escapeText(property.value)}`).join('  \n')]), ...blocks(parsed.tokens)].join('\n\n');
 
 // A reply goes as plain `text`, which a thread takes as a matter of course.
 export const slackReply = (lines: string[]): string => ['*Updated*', ...lines.map((line) => `• ${broadcasts(controls(line))}`)].join('\n');

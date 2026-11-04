@@ -6,7 +6,7 @@ import { changeBetween, measure, replyLines, worthReplying } from '../../../pack
 import { ProviderError } from '../../../packages/core/src/errors.ts';
 import { parse, plainText } from '../../../packages/core/src/render.ts';
 import { teamsHtml } from '../src/html.ts';
-import { adminConsentAddress, canEdit, DEFAULT_CLIENT_ID, readChannelLink, startBrowserSignIn } from '../src/microsoft.ts';
+import { adminConsentAddress, canEdit, readChannelLink, startBrowserSignIn } from '../src/microsoft.ts';
 
 const html = (markdown: string, title = 'Title'): string => teamsHtml(parse(markdown, 'fallback', title));
 
@@ -74,7 +74,7 @@ test('REQ6: a change is big enough by its characters or by a heading', () => {
 });
 
 test('REQ6: a reply names sections and is never a diff', () => {
-  const change = { added_chars: 1, removed_chars: 1, sections_added: ['A'], sections_removed: [], sections_changed: ['C'] };
+  const change = { added_chars: 1, removed_chars: 1, sections_added: ['A'], sections_removed: [], items_added: [], items_removed: [], properties_changed: [], sections_changed: ['C'] };
   assert.deepEqual(replyLines(change), ['Added: A', 'Changed: C']);
 });
 
@@ -104,12 +104,19 @@ test('REQ13: the admin consent address names the tenant, the app, and the permis
   assert.equal(url.pathname, '/tenant-9/v2.0/adminconsent');
   assert.equal(url.searchParams.get('client_id'), 'client-1');
   assert.equal(url.searchParams.get('scope'), 'https://graph.microsoft.com/ChannelMessage.Send');
-  assert.equal(url.searchParams.has('redirect_uri'), false, "an organization's own app has no return page registered");
+  assert.equal(url.searchParams.get('redirect_uri'), 'https://thevirtualpanda.com/eidos/teams-approved/');
 });
 
-test("REQ13: The Virtual Panda's app sends the administrator back to its approval page", () => {
-  const url = new URL(adminConsentAddress('tenant-9', DEFAULT_CLIENT_ID, ['ChannelMessage.Send']));
-  assert.equal(url.searchParams.get('redirect_uri'), 'https://thevirtualpanda.com/eidos/teams-approved/');
+test('REQ6: a reply names the list items and the shared properties that changed', () => {
+  const change = changeBetween('# Sync\nDate: Monday\n## Agenda\n- Budget\n- Vendors', '# Sync\nDate: Tuesday\n## Agenda\n- Budget\n- Hiring');
+  assert.deepEqual(change.items_added, ['Hiring']);
+  assert.deepEqual(change.items_removed, ['Vendors']);
+  assert.deepEqual(change.properties_changed, ['Date: Monday → Tuesday']);
+  assert.equal(worthReplying(change, 1000), true);
+  const lines = replyLines(change);
+  assert.ok(lines.includes('Date: Monday → Tuesday'));
+  assert.ok(lines.includes('Added: Hiring'));
+  assert.ok(lines.includes('Removed: Vendors'));
 });
 
 test('REQ12: a request to the sign-in port without its state neither ends the sign-in nor is answered', async () => {

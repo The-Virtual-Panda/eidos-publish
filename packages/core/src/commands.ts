@@ -6,6 +6,7 @@ import { ProviderError } from './errors.ts';
 import { confirm } from './prompt.ts';
 import {
   carryOut,
+  destinationNamed,
   destinations,
   openFile,
   planFor,
@@ -15,6 +16,7 @@ import {
   type Account,
   type Destination,
   type Done,
+  type Mention,
   type Plan,
   type PlanOptions,
   type Provider,
@@ -27,7 +29,10 @@ export interface FileStanding {
   rows: Array<{ destination: string; state: 'current' | 'changed' | 'unpublished'; url: string | null; at: string | null; by: string | null }>;
 }
 
-export type PublishOptions = { reply: boolean; reply_min_chars: number } & Record<string, unknown>;
+export interface PublishOptions {
+  reply: boolean;
+  reply_min_chars: number;
+}
 
 export interface PublishApi {
   destinations(): Destination[];
@@ -36,6 +41,8 @@ export interface PublishApi {
   connect(name: string | undefined, link: string): Promise<Destination>;
   disconnect(name: string): Promise<void>;
   // what the plugin's page draws itself, in words
+  // who a message could mention, for the page's picker
+  searchMentions(destination: string, query: string): Promise<Mention[]>;
   options(): PublishOptions;
   setOption(name: string, value: unknown): Promise<PublishOptions>;
   logout(): boolean;
@@ -62,12 +69,11 @@ export const action =
     }
   };
 
-const optionsOf = (host: Host, provider: Provider): PublishOptions => {
+const optionsOf = (host: Host): PublishOptions => {
   const settings = host.settings();
   return {
     reply: settings.get<boolean>('reply') !== false,
     reply_min_chars: Number(settings.get<number>('reply_min_chars') ?? 120),
-    ...Object.fromEntries((provider.textSettings ?? []).map((name) => [name, String(settings.get<string>(name) ?? '')])),
   };
 };
 
@@ -105,7 +111,8 @@ export function publishApi(host: Host, provider: Provider): PublishApi {
       host.emit('changed', {});
       return destination;
     },
-    options: () => optionsOf(host, provider),
+    searchMentions: async (name, query) => (provider.searchMentions ? provider.searchMentions(destinationNamed(host, provider, name), query) : []),
+    options: () => optionsOf(host),
     setOption: async (name, value) => {
       const settings = host.settings();
       if (name === 'reply') await settings.set(name, value === true);
@@ -113,10 +120,9 @@ export function publishApi(host: Host, provider: Provider): PublishApi {
         const chars = Number(value);
         if (!Number.isInteger(chars) || chars < 0) throw new ProviderError('The size of a change is a whole number of characters.', null);
         await settings.set(name, chars);
-      } else if (provider.textSettings?.includes(name)) await settings.set(name, String(value ?? '').trim());
-      else throw new ProviderError(`There is no setting called ${name}.`, null);
+      } else throw new ProviderError(`There is no setting called ${name}.`, null);
       host.emit('changed', {});
-      return optionsOf(host, provider);
+      return optionsOf(host);
     },
     disconnect: async (name) => {
       const held = destinations(host);
@@ -144,6 +150,53 @@ export function publishApi(host: Host, provider: Provider): PublishApi {
       });
       return { file: file.key, title: file.title, rows };
     },
+  };
+}
+
+// A name that finds nobody stops the run: a mention that resolves to no one would look right and notify no one.
+async function resolveMentions(api: PublishApi, destination: string, names: string[]): Promise<Mention[]> {
+  const found: Mention[] = [];
+  for (const given of names) {
+    const name = given.replace(/^@/, '').trim().toLowerCase();
+    const matches = (await api.searchMentions(destination, name)).filter((mention) => mention.name.toLowerCase() === name);
+    if (matches.length !== 1) throw new ProviderError(matches.length === 0 ? `Nobody called ${given} can be mentioned here, so nothing was sent.` : `More than one ${given} can be mentioned here, so nothing was sent.`, null);
+    found.push(matches[0]!);
+  }
+  return found;
+}
+
+// A step for Automations: the file that started the run, or the one named, to a channel. It takes who to mention and
+// what to share from the channel's last choice, and never posts a duplicate unless the automation says to.
+export function automationSteps(provider: Provider, api: PublishApi): { actions: object[] } {
+  const SECOND = 'Post a second message';
+  return {
+    actions: [
+      {
+        id: `${provider.command}.publish`,
+        title: `Publish to ${provider.service}`,
+        plugin: provider.command,
+        description: `Posts the file as one ${provider.service} message, or edits that message when the file changed`,
+        where: 'anywhere',
+        leaves: true,
+        get fields() {
+          const channels = api.destinations().map((destination) => destination.name);
+          return [
+            { name: 'channel', title: 'Channel', ...(channels.length > 0 ? { options: channels } : {}) },
+            { name: 'file', title: 'File (empty: the one that started the run)' },
+            ...(provider.postsAsPerson ? [{ name: 'other_author', title: 'If someone else posted the message', options: ['Stop', SECOND] }] : []),
+          ];
+        },
+        run: async ({ subject, with: given }: { subject: { id?: string; path?: string }; with: Record<string, string> }): Promise<{ text: string }> => {
+          const file = given['file'] || subject.id || subject.path;
+          if (!file) throw new Error('Nothing to publish: start this on a blueprint or a top-level doc, or name a file.');
+          const channel = given['channel'] || (api.destinations().length === 1 ? api.destinations()[0]!.name : '');
+          if (!channel) throw new Error('Choose the channel this step publishes to.');
+          const done = await api.publish(file, channel, given['other_author'] === SECOND ? { takeOver: true } : {});
+          if (done.reply_error) throw new Error(`The message is up to date, but the reply did not send: ${done.reply_error}`);
+          return { text: `${done.outcome}: ${done.file} to ${done.destination}${done.url ? ` ${done.url}` : ''}` };
+        },
+      },
+    ],
   };
 }
 
@@ -217,13 +270,16 @@ export function registerPublish(host: Host, provider: Provider, api: PublishApi)
       .option('--dry-run', 'print the message and the decision, and send nothing; no sign-in needed')
       .option('--force', 'edit the message even though the file did not change')
       .option('--no-reply', 'edit without replying in the thread')
-      .option('--json', 'print as JSON');
+      .option('--json', 'print as JSON')
+      .option('--property <name...>', 'on a first post, the frontmatter properties to share');
+    if (provider.searchMentions) publish.option('--mention <name...>', 'on a first post, the people or tags to mention, each checked before anything is sent');
     if (provider.postsAsPerson) publish.option('--take-over', "post a second message under your name in place of someone else's, without asking");
     publish
       .description('post the file as one message, or edit that message when the file changed')
       .action(
-        action(async (file: string, options: { to: string; dryRun?: boolean; force?: boolean; reply?: boolean; json?: boolean; takeOver?: boolean }) => {
-          const planOptions: PlanOptions = { ...(options.force ? { force: true } : {}), ...(options.reply === false ? { noReply: true } : {}), ...(options.takeOver ? { takeOver: true } : {}) };
+        action(async (file: string, options: { to: string; dryRun?: boolean; force?: boolean; reply?: boolean; json?: boolean; takeOver?: boolean; property?: string[]; mention?: string[] }) => {
+          const planOptions: PlanOptions = { ...(options.force ? { force: true } : {}), ...(options.reply === false ? { noReply: true } : {}), ...(options.takeOver ? { takeOver: true } : {}), ...(options.property ? { properties: options.property } : {}) };
+          if (options.mention) planOptions.mentions = await resolveMentions(api, options.to, options.mention);
           if (options.dryRun) {
             const plan = api.plan(file, options.to, planOptions);
             if (options.json) json({ ...plan, dry_run: true });

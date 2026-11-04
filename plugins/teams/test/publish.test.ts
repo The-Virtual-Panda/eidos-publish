@@ -45,8 +45,6 @@ before(async () => {
   const text = readFileSync(framework, 'utf8');
   writeFileSync(framework, `${text.replace(/^top_level:.*\n(?:[ -].*\n)*/m, '')}top_level:\n  - title: Overview\n    path: ../${DOC}\n    description: The overview\n`);
   writeDoc('# Overview\n\nFirst words.\n');
-  const set = await sandbox.run(['plugin', 'set', 'teams', 'client_id', 'client-1'], { env });
-  assert.equal(set.status, 0, set.stderr);
 });
 after(async () => {
   await sandbox.close();
@@ -85,7 +83,7 @@ test('REQ2: a channel needs only its link, and a name of any words is made fit',
 });
 
 test('the page reads and writes its settings in words, and a local one stays local', async () => {
-  const defaults = await sandbox.route<{ reply: boolean; reply_min_chars: number; client_id: string; tenant: string }>('GET', 'options');
+  const defaults = await sandbox.route<{ reply: boolean; reply_min_chars: number }>('GET', 'options');
   assert.equal(defaults.reply, true);
   assert.equal(defaults.reply_min_chars, 120);
   const changed = await sandbox.route<{ reply: boolean; reply_min_chars: number }>('POST', 'options', { body: { name: 'reply_min_chars', value: '40' } });
@@ -93,13 +91,110 @@ test('the page reads and writes its settings in words, and a local one stays loc
   assert.equal((await sandbox.route<{ reply: boolean }>('POST', 'options', { body: { name: 'reply', value: false } })).reply, false);
   await assert.rejects(sandbox.route('POST', 'options', { body: { name: 'reply_min_chars', value: 'lots' } }), /whole number/);
   await assert.rejects(sandbox.route('POST', 'options', { body: { name: 'destinations', value: [] } }), /no setting called/);
-  await sandbox.route('POST', 'options', { body: { name: 'tenant', value: ' tenant-9 ' } });
-  assert.equal((await sandbox.route<{ tenant: string }>('GET', 'options')).tenant, 'tenant-9');
-  assert.match(readFileSync(path.join(sandbox.root, '.eidos/plugins/teams/local.yaml'), 'utf8'), /tenant-9/);
-  assert.doesNotMatch(readFileSync(path.join(sandbox.root, '.eidos/plugins/teams/settings.yaml'), 'utf8'), /tenant-9/);
-  await sandbox.route('POST', 'options', { body: { name: 'tenant', value: '' } });
   await sandbox.route('POST', 'options', { body: { name: 'reply', value: true } });
   await sandbox.route('POST', 'options', { body: { name: 'reply_min_chars', value: 120 } });
+});
+
+test('a first post mentions who was chosen, an edit keeps them, and a reply names nobody', async () => {
+  await signIn(true);
+  const name = await destination();
+  writeDoc('# Overview\n\nFirst words.\n');
+  const found = await sandbox.route<Array<{ kind: string; id: string; name: string }>>('POST', 'mentions', { body: { destination: name, query: 'project' } });
+  assert.deepEqual(found, [{ kind: 'tag', id: 'tag-1', name: 'Project Managers' }]);
+  const people = await sandbox.route<Array<{ kind: string; name: string }>>('POST', 'mentions', { body: { destination: name, query: 'janelle' } });
+  assert.deepEqual(people.map((held) => held.name), ['Janelle Reyes']);
+  assert.doesNotMatch(fake.lookups.join(), /no consistency level/);
+  fake.graph.length = 0;
+  const chosen = [found[0], { kind: 'person', id: 'user-1', name: 'Janelle <Reyes>' }, { kind: 'channel', id: '19:abc@thread.tacv2', name: 'General' }];
+  await sandbox.route('POST', 'publish', { body: { file: DOC, destination: name, mentions: chosen } });
+  const posted = fake.graph[0]!.body;
+  assert.equal(posted.body.content, '<h1>Overview</h1><p>First words.</p><p><at id="0">Project Managers</at> <at id="1">Janelle &lt;Reyes&gt;</at> <at id="2">General</at></p>');
+  assert.deepEqual(posted.mentions?.map((held) => held.mentioned), [
+    { tag: { id: 'tag-1', displayName: 'Project Managers' } },
+    { user: { id: 'user-1', displayName: 'Janelle <Reyes>', userIdentityType: 'aadUser' } },
+    { conversation: { id: '19:abc@thread.tacv2', displayName: 'General', conversationIdentityType: 'channel' } },
+  ]);
+  assert.equal((JSON.parse(await ok(['publish', DOC, '--to', name, '--dry-run', '--json'])) as { action: string }).action, 'none', 'who is mentioned is not a change to the file');
+
+  fake.graph.length = 0;
+  writeDoc(`# Overview\n\nFirst words.\n\n## New\n\n${'x'.repeat(200)}\n`);
+  await ok(['publish', DOC, '--to', name]);
+  assert.equal(fake.graph[0]?.method, 'PATCH');
+  assert.equal(fake.graph[0]?.body.mentions?.length, 3, 'an edit that left them out would strip them');
+  assert.match(fake.graph[1]?.path ?? '', /replies$/);
+  assert.equal(fake.graph[1]?.body.mentions, undefined);
+
+  const next = (JSON.parse(await ok(['destinations', '--json'])) as Array<{ name: string; mentions?: unknown[] }>).find((held) => held.name === name);
+  assert.equal(next?.mentions?.length, 3, 'the channel remembers them for its next first post');
+  writeDoc('# Overview\n\nFirst words.\n');
+  await assert.rejects(run(['publish', DOC, '--to', name, '--mention', 'Nobody']).then((result) => (result.status === 0 ? null : Promise.reject(new Error(result.stderr)))), /Nobody/);
+});
+
+test('a plain sign-in mentions people and the channel with no administrator, and tags come with the approval', async () => {
+  await signIn(false);
+  const name = await destination();
+  const found = await sandbox.route<Array<{ kind: string; name: string }>>('POST', 'mentions', { body: { destination: name, query: 'project' } });
+  assert.deepEqual(found, []);
+  const people = await sandbox.route<Array<{ kind: string; name: string }>>('POST', 'mentions', { body: { destination: name, query: 'janelle' } });
+  assert.deepEqual(people, [{ kind: 'person', id: 'user-1', name: 'Janelle Reyes' }]);
+  const channel = await sandbox.route<Array<{ kind: string; name: string }>>('POST', 'mentions', { body: { destination: name, query: 'general' } });
+  assert.equal(channel[0]?.kind, 'channel');
+});
+
+test('a first post shares the properties chosen, and later edits keep sharing them', async () => {
+  await signIn(true);
+  const name = await destination();
+  writeDoc('---\ndate: 2026-08-12 14:00\nstatus: Draft\nowners: [Ada, Grace]\nnested: { a: 1 }\n---\n# Overview\n\nFirst words.\n');
+  const plan = await sandbox.route<{ action: string; first: { properties: Array<{ name: string; label: string; value: string }>; chosen: string[] } }>('POST', 'plan', { body: { file: DOC, destination: name } });
+  assert.deepEqual(plan.first.properties, [
+    { name: 'date', label: 'Date', value: '2026-08-12 14:00' },
+    { name: 'status', label: 'Status', value: 'Draft' },
+    { name: 'owners', label: 'Owners', value: 'Ada, Grace' },
+  ]);
+  assert.deepEqual(plan.first.chosen, []);
+  const chosen = await sandbox.route<{ message: string }>('POST', 'plan', { body: { file: DOC, destination: name, properties: ['date', 'owners'] } });
+  assert.equal(chosen.message, '<h1>Overview</h1><p><strong>Date:</strong> 2026-08-12 14:00<br><strong>Owners:</strong> Ada, Grace</p><p>First words.</p>');
+  fake.graph.length = 0;
+  await sandbox.route('POST', 'publish', { body: { file: DOC, destination: name, properties: ['date', 'owners'] } });
+  assert.match(fake.graph[0]?.body.body.content ?? '', /Date:<\/strong> 2026-08-12 14:00/);
+
+  fake.graph.length = 0;
+  writeDoc('---\ndate: 2026-08-13 09:00\nstatus: Final\nowners: [Ada, Grace]\n---\n# Overview\n\nFirst words.\n');
+  const edit = await sandbox.route<{ action: string; first?: unknown; reply: string[]; message: string }>('POST', 'plan', { body: { file: DOC, destination: name } });
+  assert.equal(edit.action, 'edit');
+  assert.equal(edit.first, undefined, 'the choice is a first post\'s');
+  assert.deepEqual(edit.reply, ['Date: 2026-08-12 14:00 → 2026-08-13 09:00']);
+  assert.match(edit.message, /2026-08-13 09:00/);
+  writeDoc('---\ndate: 2026-08-13 09:00\nstatus: Draft\nowners: [Ada, Grace]\n---\n# Overview\n\nFirst words.\n');
+  writeDoc('# Overview\n\nFirst words.\n');
+});
+
+test('Automations can publish: the step runs anywhere and says it leaves the machine', async () => {
+  await signIn(true);
+  const name = await destination();
+  writeDoc('# Overview\n\nFrom an automation.\n');
+  const catalog = JSON.parse((await sandbox.run(['automations', 'catalog', '--json'], { env })).stdout) as { actions: Array<{ id: string; title: string; leaves: boolean; where: string; fields: Array<{ name: string; options?: string[] }> }> };
+  const step = catalog.actions.find((held) => held.id === 'teams.publish');
+  assert.equal(step?.title, 'Publish to Teams');
+  assert.equal(step?.leaves, true);
+  assert.equal(step?.where, 'anywhere');
+  assert.ok(step?.fields.find((field) => field.name === 'channel')?.options?.includes(name));
+  const file = path.join(sandbox.root, 'publish-automation.yaml');
+  writeFileSync(file, `name: Send it\nwhen: { on: by-name }\nask: never\nsteps:\n  - do: teams.publish\n    channel: ${name}\n    file: ${DOC}\n`);
+  const saved = await sandbox.run(['automations', 'save', '--file', file], { env });
+  assert.equal(saved.status, 0, saved.stderr);
+  const on = await sandbox.run(['automations', 'on', 'Send it'], { env });
+  assert.equal(on.status, 0, on.stderr);
+  fake.graph.length = 0;
+  const running = await sandbox.run(['automations', 'run', 'Send it', '--json'], { env });
+  assert.notEqual(running.stdout, '', running.stderr);
+  const started = (JSON.parse(running.stdout) as { run: { n: number; state: string } }).run;
+  assert.equal(started.state, 'waiting', 'the first run to leave this machine asks');
+  assert.equal(fake.graph.length, 0);
+  const answered = await sandbox.run(['automations', 'answer', String(started.n), 'continue'], { env });
+  assert.equal(answered.status, 0, answered.stderr);
+  assert.equal(fake.graph[0]?.method, 'POST');
+  assert.match(published(), new RegExp(name));
 });
 
 test('REQ5: a dry run needs no sign-in and sends nothing', async () => {
@@ -163,7 +258,7 @@ test('REQ13: a sign-in the organization refuses says so, with the address for th
   const result = await run(['login', '--edit']);
   assert.equal(result.status, 1);
   assert.match(result.stderr, /organization has to approve/);
-  assert.match(result.stderr, /adminconsent\?client_id=client-1/);
+  assert.match(result.stderr, /adminconsent\?client_id=e1c53a47-293c-422b-a75c-4aaddfe910c7/);
   assert.match(result.stderr, /ChannelMessage\.ReadWrite/);
   assert.equal(existsSync(credentials()), false);
 });

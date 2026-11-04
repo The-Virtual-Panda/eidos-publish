@@ -132,56 +132,6 @@ function SignIn({ account, reload }: { account: Account | null; reload: () => vo
   );
 }
 
-type OrgApp = { client_id: string; tenant: string };
-
-// Most people never need this: it stays folded away until someone asks for it, or has already filled it in.
-function OrgAppSettings(): JSX.Element | null {
-  const host = usePluginHost();
-  const hostRef = useHostRef(host);
-  const { t } = host;
-  const [saved, setSaved] = useState<OrgApp | null>(null);
-  const [draft, setDraft] = useState<OrgApp>({ client_id: '', tenant: '' });
-  const [open, setOpen] = useState(false);
-  useEffect(() => {
-    hostRef.current.get<OrgApp>('options').then(
-      (options) => {
-        setSaved(options);
-        setDraft({ client_id: options.client_id, tenant: options.tenant });
-        if (options.client_id || options.tenant) setOpen(true);
-      },
-      (cause) => hostRef.current.toast(t('failed'), 'error', reason(cause)),
-    );
-  }, [hostRef, t]);
-  if (!saved) return null;
-  const save = (name: keyof OrgApp): void => {
-    if (draft[name] === saved[name]) return;
-    host.post<OrgApp>('options', { name, value: draft[name] }).then(setSaved, (cause) => host.toast(t('failed'), 'error', reason(cause)));
-  };
-  const field = (name: keyof OrgApp, label: string, hint: string): JSX.Element => (
-    <SettingRow
-      label={label}
-      hint={hint}
-      control={<Input aria-label={label} value={draft[name]} data-testid={`teams-${name}`} onChange={(event: { target: HTMLInputElement }) => setDraft({ ...draft, [name]: event.target.value })} onBlur={() => save(name)} />}
-    />
-  );
-  return (
-    <Card>
-      <SettingsHead>{t('orgApp')}</SettingsHead>
-      {open ? (
-        <>
-          <Text size="sm" tone="muted" block>
-            {t('orgAppHint')}
-          </Text>
-          {field('client_id', t('orgAppClient'), t('orgAppClientHint'))}
-          {field('tenant', t('orgAppTenant'), t('orgAppTenantHint'))}
-        </>
-      ) : (
-        <SettingRow label={t('orgAppOffer')} hint={t('orgAppOfferHint')} control={<Button data-testid="teams-org-app" onClick={() => setOpen(true)}>{t('orgAppUse')}</Button>} />
-      )}
-    </Card>
-  );
-}
-
 // a speech bubble holding a T
 function Icon(): JSX.Element {
   return (
@@ -200,7 +150,6 @@ export const page = publishPage({
   SignIn,
   Icon,
   linkNamesChannel: true,
-  Extra: OrgAppSettings,
-  drawn: ['client_id', 'tenant'],
+  mentionable: true,
   MessagePreview: ({ message }) => <Markdown html={message} />,
 });

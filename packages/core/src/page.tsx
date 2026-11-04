@@ -26,6 +26,7 @@ import {
   type PagePlugin,
   type PluginHost,
   Switch,
+  Checkbox,
 } from 'eidosmd/page';
 import { PUBLISH_STRINGS } from './page-strings.ts';
 
@@ -38,6 +39,12 @@ export interface Account {
   detail: string;
   can_edit: boolean;
 }
+interface Mention {
+  kind: 'person' | 'tag' | 'channel';
+  id: string;
+  name: string;
+}
+
 interface State {
   destinations: Destination[];
   account: Account | null;
@@ -56,6 +63,7 @@ interface Plan {
   title: string;
   action: 'post' | 'edit' | 'repost' | 'none' | 'refused';
   posted_by_other?: string;
+  first?: { properties: Array<{ name: string; label: string; value: string }>; chosen: string[]; mentions: Mention[]; can_mention: boolean };
   reason: string;
   message: string;
   reply: string[] | null;
@@ -83,7 +91,7 @@ export function useHostRef(host: PluginHost): { current: PluginHost } {
   return ref;
 }
 
-function PublishDialog({ service, MessagePreview }: { service: string; MessagePreview: (props: { message: string }) => JSX.Element }): JSX.Element | null {
+function PublishDialog({ service, mentionable, MessagePreview }: { service: string; mentionable: boolean; MessagePreview: (props: { message: string }) => JSX.Element }): JSX.Element | null {
   const host = usePluginHost();
   const hostRef = useHostRef(host);
   const { t } = host;
@@ -93,6 +101,11 @@ function PublishDialog({ service, MessagePreview }: { service: string; MessagePr
   const [plan, setPlan] = useState<Plan | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
+  // what the person chose for a first post, null until they touch it, which leaves the channel's last choice
+  const [properties, setProperties] = useState<string[] | null>(null);
+  const [mentions, setMentions] = useState<Mention[] | null>(null);
+  const [query, setQuery] = useState('');
+  const [found, setFound] = useState<Mention[]>([]);
 
   useEffect(() => {
     openDialog = (file, chosen) => {
@@ -100,6 +113,10 @@ function PublishDialog({ service, MessagePreview }: { service: string; MessagePr
       setDestinations(null);
       setPlan(null);
       setProblem(null);
+      setProperties(null);
+      setMentions(null);
+      setQuery('');
+      setFound([]);
     };
     return () => {
       openDialog = null;
@@ -120,9 +137,8 @@ function PublishDialog({ service, MessagePreview }: { service: string; MessagePr
   useEffect(() => {
     if (!target || !destination) return;
     let live = true;
-    setPlan(null);
     setProblem(null);
-    hostRef.current.post<Plan>('plan', { file: target.file, destination }).then(
+    hostRef.current.post<Plan>('plan', { file: target.file, destination, ...(properties ? { properties } : {}) }).then(
       (next) => {
         if (live) setPlan(next);
       },
@@ -133,15 +149,40 @@ function PublishDialog({ service, MessagePreview }: { service: string; MessagePr
     return () => {
       live = false;
     };
-  }, [hostRef, target, destination]);
+  }, [hostRef, target, destination, properties]);
+
+  useEffect(() => {
+    if (!destination || query.trim() === '') {
+      setFound([]);
+      return;
+    }
+    let live = true;
+    const timer = setTimeout(() => {
+      hostRef.current.post<Mention[]>('mentions', { destination, query }).then(
+        (next) => {
+          if (live) setFound(next);
+        },
+        (cause) => {
+          if (live) setProblem(reason(cause));
+        },
+      );
+    }, 250);
+    return () => {
+      live = false;
+      clearTimeout(timer);
+    };
+  }, [hostRef, destination, query]);
 
   if (!target) return null;
+  const first = plan?.first;
+  const chosenProperties = properties ?? first?.chosen ?? [];
+  const chosenMentions = mentions ?? first?.mentions ?? [];
   const close = (): void => setTarget(null);
   const send = async (): Promise<void> => {
     setSending(true);
     setProblem(null);
     try {
-      const done = await host.post<Done>('publish', { file: target.file, destination, ...(plan?.posted_by_other ? { take_over: true } : {}) });
+      const done = await host.post<Done>('publish', { file: target.file, destination, ...(plan?.posted_by_other ? { take_over: true } : {}), ...(first ? { properties: chosenProperties, mentions: chosenMentions } : {}) });
       if (done.reply_error) host.toast(t('replyFailed'), 'error', done.reply_error);
       else host.toast(t('sent', { destination }), 'success');
       close();
@@ -214,6 +255,74 @@ function PublishDialog({ service, MessagePreview }: { service: string; MessagePr
               <Text size="sm" tone="muted" block>
                 {plan.reason}
               </Text>
+            )}
+            {first && (first.can_mention || mentionable) && (
+              <Stack gap="xs">
+                <Text size="sm" weight="strong" block>
+                  {t('mentionTitle')}
+                </Text>
+                {first.can_mention ? (
+                  <>
+                    {chosenMentions.length > 0 && (
+                      <Row gap="xs" wrap>
+                        {chosenMentions.map((held) => (
+                          <Button key={`${held.kind}:${held.id}`} size="sm" aria-label={t('mentionRemove', { name: held.name })} onClick={() => setMentions(chosenMentions.filter((other) => other !== held))}>
+                            {`@${held.name} ×`}
+                          </Button>
+                        ))}
+                      </Row>
+                    )}
+                    <Input aria-label={t('mentionTitle')} placeholder={t('mentionPlaceholder')} value={query} data-testid="publish-mention" onChange={(event: { target: HTMLInputElement }) => setQuery(event.target.value)} />
+                    {found.length > 0 && (
+                      <Row gap="xs" wrap>
+                        {found
+                          .filter((held) => !chosenMentions.some((other) => other.kind === held.kind && other.id === held.id))
+                          .map((held) => (
+                            <Button
+                              key={`${held.kind}:${held.id}`}
+                              size="sm"
+                              onClick={() => {
+                                setMentions([...chosenMentions, held]);
+                                setQuery('');
+                              }}
+                            >
+                              {held.kind === 'person' ? held.name : `${held.name} (${t(held.kind === 'tag' ? 'mentionTag' : 'mentionChannel')})`}
+                            </Button>
+                          ))}
+                      </Row>
+                    )}
+                    <Text size="sm" tone="muted" block>
+                      {t('mentionHint')}
+                    </Text>
+                  </>
+                ) : (
+                  <Text size="sm" tone="muted" block>
+                    {t('mentionSignIn')}
+                  </Text>
+                )}
+              </Stack>
+            )}
+            {first && first.properties.length > 0 && (
+              <Stack gap="xs">
+                <Text size="sm" weight="strong" block>
+                  {t('propertiesTitle')}
+                </Text>
+                {first.properties.map((property) => (
+                  <Row key={property.name} gap="sm">
+                    <Checkbox
+                      aria-label={property.label}
+                      checked={chosenProperties.includes(property.name)}
+                      onChange={(event: { target: HTMLInputElement }) =>
+                        setProperties(event.target.checked ? [...chosenProperties, property.name] : chosenProperties.filter((name) => name !== property.name))
+                      }
+                    />
+                    <Text size="sm">{property.label}</Text>
+                    <Text size="sm" tone="muted">
+                      {property.value}
+                    </Text>
+                  </Row>
+                ))}
+              </Stack>
             )}
             {plan.reply && (
               <Stack gap="xs">
@@ -367,7 +476,7 @@ function ReplySettings(): JSX.Element | null {
   );
 }
 
-function PublishSettings({ SignIn, linkNamesChannel, Extra }: { SignIn: SignIn; linkNamesChannel: boolean; Extra?: (() => JSX.Element | null) | undefined }): JSX.Element {
+function PublishSettings({ SignIn, linkNamesChannel }: { SignIn: SignIn; linkNamesChannel: boolean }): JSX.Element {
   const host = usePluginHost();
   const hostRef = useHostRef(host);
   const { t } = host;
@@ -458,7 +567,6 @@ function PublishSettings({ SignIn, linkNamesChannel, Extra }: { SignIn: SignIn; 
         </Row>
       </Card>
       <ReplySettings />
-      {Extra && <Extra />}
     </Stack>
   );
 }
@@ -472,15 +580,14 @@ export interface PublishPage {
   Icon: () => JSX.Element;
   // a channel's link says what it is called, so nobody is asked to name it
   linkNamesChannel?: boolean;
-  // the plugin's own settings, under the shared ones, and the names of those it draws
-  Extra?: () => JSX.Element | null;
-  drawn?: string[];
+  // a person can mention people and tags on a first post
+  mentionable?: boolean;
   // what people will see, in the form the service shows it
   MessagePreview: (props: { message: string }) => JSX.Element;
 }
 
 // A plugin's page half: the core's words with its own over them, and its service throughout.
-export function publishPage({ name, service, strings, SignIn, Icon, MessagePreview, linkNamesChannel = false, Extra, drawn = [] }: PublishPage): PagePlugin {
+export function publishPage({ name, service, strings, SignIn, Icon, MessagePreview, linkNamesChannel = false, mentionable = false }: PublishPage): PagePlugin {
   return {
     name,
     strings: {
@@ -501,8 +608,8 @@ export function publishPage({ name, service, strings, SignIn, Icon, MessagePrevi
         },
       },
     ],
-    layer: () => <PublishDialog service={service} MessagePreview={MessagePreview} />,
-    settings: () => <PublishSettings SignIn={SignIn} linkNamesChannel={linkNamesChannel} Extra={Extra} />,
-    settingsDrawn: ['destinations', 'reply', 'reply_min_chars', ...drawn],
+    layer: () => <PublishDialog service={service} mentionable={mentionable} MessagePreview={MessagePreview} />,
+    settings: () => <PublishSettings SignIn={SignIn} linkNamesChannel={linkNamesChannel} />,
+    settingsDrawn: ['destinations', 'reply', 'reply_min_chars'],
   };
 }

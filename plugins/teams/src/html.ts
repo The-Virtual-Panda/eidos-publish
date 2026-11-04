@@ -89,5 +89,6 @@ function blocksHtml(tokens: Token[]): string {
 }
 
 export function teamsHtml(parsed: Parsed): string {
-  return `<h1>${escape(parsed.title)}</h1>${blocksHtml(parsed.tokens)}`;
+  const properties = parsed.properties.length === 0 ? '' : `<p>${parsed.properties.map((property) => `<strong>${escape(property.label)}:</strong> ${escape(property.value)}`).join('<br>')}</p>`;
+  return `<h1>${escape(parsed.title)}</h1>${properties}${blocksHtml(parsed.tokens)}`;
 }

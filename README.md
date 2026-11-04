@@ -24,13 +24,6 @@ Only the person who posted a message can edit it, so when someone else's file ch
 
 `eidos teams login` opens Microsoft's sign-in in your browser. On a machine with no browser, `eidos teams login --device` signs in with a code you enter elsewhere, which security defaults and many organizations block.
 
-An organization that will not consent to an outside app can register its own in Microsoft Entra ID (a public client, with public client flows allowed, `http://localhost` as a Mobile and desktop redirect URI, and the delegated permissions above) and set it, with no code change:
-
-```bash
-eidos plugin set teams client_id <application id>
-eidos plugin set teams tenant <tenant id>
-```
-
 ## Publish to Slack
 
 ```bash

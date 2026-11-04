@@ -11,15 +11,17 @@ import type { AddressInfo } from 'node:net';
 import { ProviderError } from '../../../packages/core/src/errors.ts';
 
 // The Virtual Panda's multi-tenant Entra app, a public client with no secret.
-// `client_id`, a `me` setting, stands in for it.
 export const DEFAULT_CLIENT_ID = 'e1c53a47-293c-422b-a75c-4aaddfe910c7';
 
-// Where Microsoft sends an administrator after they review The Virtual Panda's app. An organization's
-// own app has no such address registered, and Microsoft would refuse it, so only this app names one.
+// Where Microsoft sends an administrator after they review the app.
 const ADMIN_CONSENT_RETURN = 'https://thevirtualpanda.com/eidos/teams-approved/';
 
 const SEND = 'ChannelMessage.Send';
 const EDIT = 'ChannelMessage.ReadWrite';
+// What the mention picker reads: people in the directory by name, which a person may consent to, and the team's tags,
+// which like editing takes an administrator, so it is asked for along with editing and a plain sign-in still works.
+const TAGS = 'TeamworkTag.Read';
+const PEOPLE = 'User.ReadBasic.All';
 const TIMEOUT_MS = 30_000;
 const RETRIES = 4;
 const BROWSER_SIGN_IN_SECONDS = 900;
@@ -49,14 +51,17 @@ const graphBase = (): string => base('EIDOS_TEAMS_GRAPH_BASE', 'https://graph.mi
 
 const shortScope = (scope: string): string => scope.replace(/^.*\//, '');
 export const canEdit = (scopes: string[]): boolean => scopes.some((scope) => shortScope(scope).toLowerCase() === EDIT.toLowerCase());
-export const permissionsFor = (edit: boolean): string[] => (edit ? [SEND, EDIT] : [SEND]);
+const has = (scopes: string[], wanted: string): boolean => scopes.some((scope) => shortScope(scope).toLowerCase() === wanted.toLowerCase());
+export const canMention = (scopes: string[]): boolean => has(scopes, PEOPLE);
+export const canMentionTags = (scopes: string[]): boolean => has(scopes, TAGS);
+export const permissionsFor = (edit: boolean): string[] => (edit ? [SEND, PEOPLE, EDIT, TAGS] : [SEND, PEOPLE]);
 const scopeParam = (scopes: string[]): string => [...scopes.map((scope) => `https://graph.microsoft.com/${shortScope(scope)}`), 'offline_access', 'openid', 'profile'].join(' ');
 
 export function adminConsentAddress(tenant: string, clientId: string, permissions: string[]): string {
   const query = new URLSearchParams({
     client_id: clientId,
     scope: permissions.map((scope) => `https://graph.microsoft.com/${scope}`).join(' '),
-    ...(clientId === DEFAULT_CLIENT_ID ? { redirect_uri: ADMIN_CONSENT_RETURN } : {}),
+    redirect_uri: ADMIN_CONSENT_RETURN,
   });
   return `${loginBase()}/${encodeURIComponent(tenant)}/v2.0/adminconsent?${query.toString()}`;
 }
@@ -156,7 +161,7 @@ const tokensOf = (body: Record<string, unknown>): Tokens => ({
   scopes: String(body['scope'] ?? '')
     .split(/\s+/)
     .map(shortScope)
-    .filter((scope) => /^ChannelMessage\./i.test(scope)),
+    .filter((scope) => /^(ChannelMessage\.|TeamworkTag\.|User\.ReadBasic)/i.test(scope)),
   ...who(body['id_token']),
 });
 
@@ -327,22 +332,47 @@ export interface Channel {
   channel: string;
 }
 
+export type Mention = { kind: 'person' | 'tag' | 'channel'; id: string; name: string };
+
 export interface Graph {
-  post(channel: Channel, html: string): Promise<{ id: string; url: string | null }>;
-  edit(channel: Channel, message: string, html: string): Promise<void>;
+  post(channel: Channel, html: string, mentions?: Mention[]): Promise<{ id: string; url: string | null }>;
+  edit(channel: Channel, message: string, html: string, mentions?: Mention[]): Promise<void>;
+  search(channel: Channel, channelName: string, query: string, withTags: boolean): Promise<Mention[]>;
   reply(channel: Channel, message: string, html: string): Promise<void>;
 }
 
+const escapeName = (name: string): string => name.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+// Teams notifies only when the mark in the body and the entity agree, each by the same number. The mentions trail the
+// message, so what a file says stays the first thing a reader sees.
+function messageBody(html: string, mentions: Mention[]): Record<string, unknown> {
+  if (mentions.length === 0) return { body: { contentType: 'html', content: html } };
+  const marks = mentions.map((mention, id) => `<at id="${id}">${escapeName(mention.name)}</at>`).join(' ');
+  return {
+    body: { contentType: 'html', content: `${html}<p>${marks}</p>` },
+    mentions: mentions.map((mention, id) => ({
+      id,
+      mentionText: mention.name,
+      mentioned:
+        mention.kind === 'person'
+          ? { user: { id: mention.id, displayName: mention.name, userIdentityType: 'aadUser' } }
+          : mention.kind === 'tag'
+            ? { tag: { id: mention.id, displayName: mention.name } }
+            : { conversation: { id: mention.id, displayName: mention.name, conversationIdentityType: 'channel' } },
+    })),
+  };
+}
+
 export function graph(accessToken: string, wait: (ms: number) => Promise<void> = (ms) => new Promise((resolve) => setTimeout(resolve, ms))): Graph {
-  const send = async (method: 'POST' | 'PATCH', below: string, html: string): Promise<Record<string, unknown>> => {
+  const send = async (method: 'POST' | 'PATCH' | 'GET', below: string, html?: string, mentions: Mention[] = [], headers: Record<string, string> = {}): Promise<Record<string, unknown>> => {
     const url = `${graphBase()}/v1.0${below}`;
     for (let attempt = 0; ; attempt += 1) {
       let response: Response;
       try {
         response = await fetch(url, {
           method,
-          headers: { authorization: `Bearer ${accessToken}`, 'content-type': 'application/json', accept: 'application/json' },
-          body: JSON.stringify({ body: { contentType: 'html', content: html } }),
+          headers: { authorization: `Bearer ${accessToken}`, 'content-type': 'application/json', accept: 'application/json', ...headers },
+          ...(method === 'GET' ? {} : { body: JSON.stringify(messageBody(html ?? '', mentions)) }),
           signal: AbortSignal.timeout(TIMEOUT_MS),
         });
       } catch (cause) {
@@ -369,12 +399,30 @@ export function graph(accessToken: string, wait: (ms: number) => Promise<void> =
   };
   const channelPath = (channel: Channel): string => `/teams/${encodeURIComponent(channel.team)}/channels/${encodeURIComponent(channel.channel)}/messages`;
   return {
-    post: async (channel, html) => {
-      const body = await send('POST', channelPath(channel), html);
+    post: async (channel, html, mentions) => {
+      const body = await send('POST', channelPath(channel), html, mentions);
       return { id: String(body['id']), url: typeof body['webUrl'] === 'string' ? body['webUrl'] : null };
     },
-    edit: async (channel, message, html) => {
-      await send('PATCH', `${channelPath(channel)}/${encodeURIComponent(message)}`, html);
+    edit: async (channel, message, html, mentions) => {
+      await send('PATCH', `${channelPath(channel)}/${encodeURIComponent(message)}`, html, mentions);
+    },
+    search: async (channel, channelName, query, withTags) => {
+      const wanted = query.trim().toLowerCase();
+      if (!wanted) return [];
+      const search = wanted.replace(/["\\]/g, '');
+      const [tags, people] = await Promise.all([
+        withTags ? send('GET', `/teams/${encodeURIComponent(channel.team)}/tags`) : Promise.resolve({}),
+        send('GET', `/users?$search=${encodeURIComponent(`"displayName:${search}" OR "mail:${search}"`)}&$select=id,displayName,mail&$top=8`, undefined, [], { consistencylevel: 'eventual' }),
+      ]);
+      const list = (held: Record<string, unknown>): Array<Record<string, unknown>> => (Array.isArray(held['value']) ? (held['value'] as Array<Record<string, unknown>>) : []);
+      const here: Mention[] = channelName.toLowerCase().includes(wanted) || 'channel'.includes(wanted) ? [{ kind: 'channel', id: channel.channel, name: channelName || 'Channel' }] : [];
+      return [
+        ...here,
+        ...list(tags)
+          .filter((tag) => String(tag['displayName'] ?? '').toLowerCase().includes(wanted))
+          .map((tag): Mention => ({ kind: 'tag', id: String(tag['id']), name: String(tag['displayName']) })),
+        ...list(people).map((person): Mention => ({ kind: 'person', id: String(person['id']), name: String(person['displayName']) })),
+      ];
     },
     reply: async (channel, message, html) => {
       await send('POST', `${channelPath(channel)}/${encodeURIComponent(message)}/replies`, html);

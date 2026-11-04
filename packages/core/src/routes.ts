@@ -4,9 +4,17 @@
 // answer carries a token.
 import { HostError, type AppHost } from 'eidosmd/plugin';
 import type { PublishApi } from './commands.ts';
+import type { Mention, PlanOptions } from './publish.ts';
 
 export const text = (value: unknown): string => (typeof value === 'string' ? value.trim() : '');
-const options = (body: Record<string, unknown>): { force?: boolean; noReply?: boolean; takeOver?: boolean } => ({
+const isMention = (value: unknown): value is Mention => {
+  const held = value as Partial<Mention> | null;
+  return typeof held === 'object' && held !== null && ['person', 'tag', 'channel'].includes(String(held.kind)) && typeof held.id === 'string' && typeof held.name === 'string';
+};
+
+const options = (body: Record<string, unknown>): PlanOptions => ({
+  ...(Array.isArray(body['properties']) ? { properties: body['properties'].filter((name): name is string => typeof name === 'string') } : {}),
+  ...(Array.isArray(body['mentions']) ? { mentions: body['mentions'].filter(isMention) } : {}),
   ...(body['force'] === true ? { force: true } : {}),
   ...(body['no_reply'] === true ? { noReply: true } : {}),
   ...(body['take_over'] === true ? { takeOver: true } : {}),
@@ -28,6 +36,7 @@ export function mountPublish(host: AppHost, api: PublishApi): void {
   host.route('POST', 'publish', (request) => answer(() => api.publish(text(request.body['file']), text(request.body['destination']), options(request.body))));
   host.route('POST', 'connect', (request) => answer(() => api.connect(text(request.body['name']), text(request.body['link']))));
   host.route('POST', 'disconnect', (request) => answer(async () => (await api.disconnect(text(request.body['name'])), {})));
+  host.route('POST', 'mentions', (request) => answer(() => api.searchMentions(text(request.body['destination']), text(request.body['query']))));
   host.route('GET', 'options', () => answer(() => api.options()));
   host.route('POST', 'options', (request) => answer(() => api.setOption(text(request.body['name']), request.body['value'])));
   host.route('POST', 'logout', () => answer(() => ({ signed_out: api.logout() })));
