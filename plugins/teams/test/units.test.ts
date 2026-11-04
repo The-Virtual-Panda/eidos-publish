@@ -6,7 +6,7 @@ import { changeBetween, measure, replyLines, worthReplying } from '../../../pack
 import { ProviderError } from '../../../packages/core/src/errors.ts';
 import { parse, plainText } from '../../../packages/core/src/render.ts';
 import { teamsHtml } from '../src/html.ts';
-import { adminConsentAddress, canEdit, readChannelLink, startBrowserSignIn } from '../src/microsoft.ts';
+import { adminConsentAddress, canEdit, DEFAULT_CLIENT_ID, readChannelLink, startBrowserSignIn } from '../src/microsoft.ts';
 
 const html = (markdown: string, title = 'Title'): string => teamsHtml(parse(markdown, 'fallback', title));
 
@@ -104,6 +104,12 @@ test('REQ13: the admin consent address names the tenant, the app, and the permis
   assert.equal(url.pathname, '/tenant-9/v2.0/adminconsent');
   assert.equal(url.searchParams.get('client_id'), 'client-1');
   assert.equal(url.searchParams.get('scope'), 'https://graph.microsoft.com/ChannelMessage.Send');
+  assert.equal(url.searchParams.has('redirect_uri'), false, "an organization's own app has no return page registered");
+});
+
+test("REQ13: The Virtual Panda's app sends the administrator back to its approval page", () => {
+  const url = new URL(adminConsentAddress('tenant-9', DEFAULT_CLIENT_ID, ['ChannelMessage.Send']));
+  assert.equal(url.searchParams.get('redirect_uri'), 'https://thevirtualpanda.com/eidos/teams-approved/');
 });
 
 test('REQ12: a request to the sign-in port without its state neither ends the sign-in nor is answered', async () => {

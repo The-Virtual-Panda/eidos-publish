@@ -14,6 +14,10 @@ import { ProviderError } from '../../../packages/core/src/errors.ts';
 // `client_id`, a `me` setting, stands in for it.
 export const DEFAULT_CLIENT_ID = 'e1c53a47-293c-422b-a75c-4aaddfe910c7';
 
+// Where Microsoft sends an administrator after they review The Virtual Panda's app. An organization's
+// own app has no such address registered, and Microsoft would refuse it, so only this app names one.
+const ADMIN_CONSENT_RETURN = 'https://thevirtualpanda.com/eidos/teams-approved/';
+
 const SEND = 'ChannelMessage.Send';
 const EDIT = 'ChannelMessage.ReadWrite';
 const TIMEOUT_MS = 30_000;
@@ -49,7 +53,11 @@ export const permissionsFor = (edit: boolean): string[] => (edit ? [SEND, EDIT] 
 const scopeParam = (scopes: string[]): string => [...scopes.map((scope) => `https://graph.microsoft.com/${shortScope(scope)}`), 'offline_access', 'openid', 'profile'].join(' ');
 
 export function adminConsentAddress(tenant: string, clientId: string, permissions: string[]): string {
-  const query = new URLSearchParams({ client_id: clientId, scope: permissions.map((scope) => `https://graph.microsoft.com/${scope}`).join(' ') });
+  const query = new URLSearchParams({
+    client_id: clientId,
+    scope: permissions.map((scope) => `https://graph.microsoft.com/${scope}`).join(' '),
+    ...(clientId === DEFAULT_CLIENT_ID ? { redirect_uri: ADMIN_CONSENT_RETURN } : {}),
+  });
   return `${loginBase()}/${encodeURIComponent(tenant)}/v2.0/adminconsent?${query.toString()}`;
 }
 
