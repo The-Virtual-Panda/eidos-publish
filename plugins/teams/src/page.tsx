@@ -149,5 +149,6 @@ export const page = publishPage({
   strings: TEAMS_STRINGS,
   SignIn,
   Icon,
+  linkNamesChannel: true,
   MessagePreview: ({ message }) => <Markdown html={message} />,
 });

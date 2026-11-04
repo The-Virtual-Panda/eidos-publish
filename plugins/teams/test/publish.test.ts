@@ -69,6 +69,21 @@ test('REQ2: a destination is added by its link and shared in the settings, and a
   assert.match(bad.stderr, /Get link to channel/);
 });
 
+test('REQ2: a channel needs only its link, and a name of any words is made fit', async () => {
+  const before = (await sandbox.route<{ destinations: Array<{ name: string }> }>('GET', 'state')).destinations.map((held) => held.name);
+  const link = (id: string, title: string): string => `https://teams.microsoft.com/l/channel/19%3A${id}%40thread.tacv2/${encodeURIComponent(title)}?groupId=11111111-2222-3333-4444-555555555555`;
+  const first = await sandbox.route<{ name: string; channel_name: string }>('POST', 'connect', { body: { link: link('one', 'Eidos Publish Testing') } });
+  assert.equal(first.name, 'eidos-publish-testing');
+  assert.equal(first.channel_name, 'Eidos Publish Testing');
+  await assert.rejects(sandbox.route('POST', 'connect', { body: { link: link('one', 'Eidos Publish Testing') } }), /already added, as Eidos Publish Testing/);
+  const sameTitle = await sandbox.route<{ name: string }>('POST', 'connect', { body: { link: link('two', 'Eidos Publish Testing') } });
+  assert.equal(sameTitle.name, 'eidos-publish-testing-2');
+  assert.equal((JSON.parse(await ok(['connect', 'Team Updates!', '--channel', link('three', 'General'), '--json'])) as { name: string }).name, 'team-updates');
+  assert.match(await ok(['connect', '--channel', link('four', 'General')]), /Added general, the General channel/);
+  for (const name of ['eidos-publish-testing', 'eidos-publish-testing-2', 'team-updates', 'general']) await ok(['disconnect', name]);
+  assert.deepEqual((await sandbox.route<{ destinations: Array<{ name: string }> }>('GET', 'state')).destinations.map((held) => held.name), before);
+});
+
 test('REQ5: a dry run needs no sign-in and sends nothing', async () => {
   await ok(['logout']);
   const name = await destination();

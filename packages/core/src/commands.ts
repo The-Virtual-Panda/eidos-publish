@@ -30,7 +30,8 @@ export interface FileStanding {
 export interface PublishApi {
   destinations(): Destination[];
   account(): Account | null;
-  connect(name: string, link: string): Promise<Destination>;
+  // the name is optional: a channel's link usually says it
+  connect(name: string | undefined, link: string): Promise<Destination>;
   disconnect(name: string): Promise<void>;
   logout(): boolean;
   plan(file: string, destination: string, options?: PlanOptions): Plan;
@@ -56,16 +57,36 @@ export const action =
     }
   };
 
+// What a destination is called in `--to` and the settings file, from any words.
+const slugged = (words: string): string =>
+  words
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+
 export function publishApi(host: Host, provider: Provider): PublishApi {
   return {
     destinations: () => destinations(host),
     account: () => provider.account(),
     connect: async (name, link) => {
-      const named = name.trim();
-      if (!/^[a-z0-9][a-z0-9-]*$/i.test(named)) throw new ProviderError('A destination is named with letters, digits, and hyphens, such as team-updates.', null);
+      const read = provider.readChannel(link);
       const held = destinations(host);
-      if (held.some((destination) => destination.name.toLowerCase() === named.toLowerCase())) throw new ProviderError(`There is already a destination called ${named}.`, null);
-      const destination = { name: named, ...provider.readChannel(link) } as Destination;
+      const taken = (candidate: string): boolean => held.some((destination) => destination.name.toLowerCase() === candidate);
+      const given = (name ?? '').trim();
+      let named = slugged(given);
+      if (given) {
+        if (!named) throw new ProviderError('A destination needs a name with at least one letter or digit, such as team-updates.', null);
+        if (taken(named)) throw new ProviderError(`There is already a destination called ${named}.`, null);
+      } else {
+        const already = held.find((destination) => destination.key === read.key);
+        if (already) throw new ProviderError(`This channel is already added, as ${already.channel_name || already.name}.`, null);
+        const base = slugged(String(read.channel_name ?? '')) || slugged(String(read.key)) || 'channel';
+        named = base;
+        for (let n = 2; taken(named); n += 1) named = `${base}-${n}`;
+      }
+      const destination = { name: named, ...read, channel_name: read.channel_name || (given !== named ? given : '') } as Destination;
       await host.settings().set('destinations', [...held, destination]);
       host.emit('changed', {});
       return destination;
@@ -126,12 +147,12 @@ export function registerPublish(host: Host, provider: Provider, api: PublishApi)
 
     command
       .command('connect')
-      .argument('<name>', "the destination's name")
+      .argument('[name]', "what to call it in --to; taken from the channel when left out")
       .requiredOption('--channel <link>', provider.channelHelp)
       .option('--json', 'print as JSON')
       .description('add a channel this root publishes to')
       .action(
-        action(async (name: string, options: { channel: string; json?: boolean }) => {
+        action(async (name: string | undefined, options: { channel: string; json?: boolean }) => {
           const destination = await api.connect(name, options.channel);
           if (options.json) return json(destination);
           print(`Added ${destination.name}${destination.channel_name ? `, the ${destination.channel_name} channel` : ''}.`);

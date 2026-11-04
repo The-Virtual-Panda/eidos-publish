@@ -193,7 +193,7 @@ function PublishDialog({ service, MessagePreview }: { service: string; MessagePr
               <Select aria-label={t('destination')} value={destination} onChange={(event: { target: HTMLSelectElement }) => setDestination(event.target.value)}>
                 {(destinations ?? []).map((held) => (
                   <option key={held.name} value={held.name}>
-                    {held.channel_name ? `${held.name} (${held.channel_name})` : held.name}
+                    {held.channel_name || held.name}
                   </option>
                 ))}
               </Select>
@@ -316,7 +316,7 @@ function PublishedView({ service }: { service: string }): JSX.Element {
 
 export type SignIn = (props: { account: Account | null; reload: () => void }) => JSX.Element;
 
-function PublishSettings({ SignIn }: { SignIn: SignIn }): JSX.Element {
+function PublishSettings({ SignIn, linkNamesChannel }: { SignIn: SignIn; linkNamesChannel: boolean }): JSX.Element {
   const host = usePluginHost();
   const hostRef = useHostRef(host);
   const { t } = host;
@@ -359,8 +359,7 @@ function PublishSettings({ SignIn }: { SignIn: SignIn }): JSX.Element {
         {destinations.map((destination) => (
           <SettingRow
             key={destination.name}
-            label={destination.name}
-            {...(destination.channel_name ? { hint: destination.channel_name } : {})}
+            label={destination.channel_name || destination.name}
             control={
               <Button
                 disabled={busy}
@@ -377,21 +376,23 @@ function PublishSettings({ SignIn }: { SignIn: SignIn }): JSX.Element {
           />
         ))}
         <SettingRow
-          label={t('name')}
-          control={
-            <Input aria-label={t('name')} placeholder={t('namePlaceholder')} value={name} data-testid="publish-name" onChange={(event: { target: HTMLInputElement }) => setName(event.target.value)} />
-          }
-        />
-        <SettingRow
           label={t('link')}
           hint={t('linkHint')}
           control={<Input aria-label={t('link')} value={link} data-testid="publish-link" onChange={(event: { target: HTMLInputElement }) => setLink(event.target.value)} />}
         />
+        {!linkNamesChannel && (
+          <SettingRow
+            label={t('name')}
+            control={
+              <Input aria-label={t('name')} placeholder={t('namePlaceholder')} value={name} data-testid="publish-name" onChange={(event: { target: HTMLInputElement }) => setName(event.target.value)} />
+            }
+          />
+        )}
         <Row justify="end">
           <Button
             variant="primary"
             data-testid="publish-add"
-            disabled={busy || name.trim() === '' || link.trim() === ''}
+            disabled={busy || link.trim() === ''}
             onClick={() =>
               void act(async () => {
                 await host.post('connect', { name, link });
@@ -416,12 +417,14 @@ export interface PublishPage {
   SignIn: SignIn;
   // the view's mark in the sidebar
   Icon: () => JSX.Element;
+  // a channel's link says what it is called, so nobody is asked to name it
+  linkNamesChannel?: boolean;
   // what people will see, in the form the service shows it
   MessagePreview: (props: { message: string }) => JSX.Element;
 }
 
 // A plugin's page half: the core's words with its own over them, and its service throughout.
-export function publishPage({ name, service, strings, SignIn, Icon, MessagePreview }: PublishPage): PagePlugin {
+export function publishPage({ name, service, strings, SignIn, Icon, MessagePreview, linkNamesChannel = false }: PublishPage): PagePlugin {
   return {
     name,
     strings: {
@@ -443,7 +446,7 @@ export function publishPage({ name, service, strings, SignIn, Icon, MessagePrevi
       },
     ],
     layer: () => <PublishDialog service={service} MessagePreview={MessagePreview} />,
-    settings: () => <PublishSettings SignIn={SignIn} />,
+    settings: () => <PublishSettings SignIn={SignIn} linkNamesChannel={linkNamesChannel} />,
     settingsDrawn: ['destinations'],
   };
 }

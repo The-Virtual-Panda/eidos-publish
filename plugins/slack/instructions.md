@@ -16,7 +16,7 @@ Every post, edit, and reply reaches real people. Never publish on your own initi
 
 - `eidos slack login`: keeps the bot token, typed hidden (read from stdin without a terminal, never an argument), checked with Slack first. In a terminal it prints the address that makes the app from the plugin's manifest. The person must do this themselves. `eidos slack manifest` prints the manifest.
 - `eidos slack logout`, `eidos slack whoami [--json]`.
-- `eidos slack connect <name> --channel <link or id> [--json]`: add a destination by Copy link in Slack, or the channel's id. `eidos slack disconnect <name>` removes one; its messages stay. `eidos slack destinations [--json]` lists them. A private channel needs the app invited with `/invite`.
+- `eidos slack connect [name] --channel <link or id> [--json]`: add a destination by Copy link in Slack, or the channel's id. `eidos slack disconnect <name>` removes one; its messages stay. `eidos slack destinations [--json]` lists them. A private channel needs the app invited with `/invite`.
 - `eidos slack publish <file> --to <destination> [--dry-run] [--force] [--no-reply] [--json]`: `<file>` is a blueprint's id or path, or a top-level doc's path. `--force` edits a message whose file did not change, for after a release that changes rendering. `--dry-run --json`: `{ file, title, destination, action: post|edit|none|refused, reason, message, size, limit, reply, url, dry_run }`. `--json`: `{ file, destination, outcome: posted|edited|replaced|unchanged, reason, message_id, url, replied, reply_error? }`.
 - `eidos slack status [<destination>] [--json]`: read from the root alone, with no request: `[{ file, destination, state: current|changed|missing, at, by, url }]`.
 

@@ -13,9 +13,9 @@ Each runs on your machine and talks to the service directly. Nothing is hosted, 
 
 ```bash
 eidos teams login
-eidos teams connect team-updates --channel "<link from Get link to channel>"
-eidos teams publish B-X05 --to team-updates --dry-run
-eidos teams publish B-X05 --to team-updates
+eidos teams connect --channel "<link from Get link to channel>"
+eidos teams publish B-X05 --to general --dry-run
+eidos teams publish B-X05 --to general
 ```
 
 A message is posted as you. Posting and replying need `ChannelMessage.Send`, which you can usually consent to yourself. Editing needs `ChannelMessage.ReadWrite`, which Microsoft requires an administrator to approve. `eidos teams login` asks for the first; `eidos teams login --edit` asks for both. Until editing is approved, a change posts a new message and the old one stays.
