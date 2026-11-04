@@ -6,9 +6,10 @@ import { HostError, type AppHost } from 'eidosmd/plugin';
 import type { PublishApi } from './commands.ts';
 
 export const text = (value: unknown): string => (typeof value === 'string' ? value.trim() : '');
-const options = (body: Record<string, unknown>): { force?: boolean; noReply?: boolean } => ({
+const options = (body: Record<string, unknown>): { force?: boolean; noReply?: boolean; takeOver?: boolean } => ({
   ...(body['force'] === true ? { force: true } : {}),
   ...(body['no_reply'] === true ? { noReply: true } : {}),
+  ...(body['take_over'] === true ? { takeOver: true } : {}),
 });
 
 export async function answer<T>(work: () => Promise<T> | T): Promise<T> {

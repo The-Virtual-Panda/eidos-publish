@@ -54,6 +54,7 @@ interface Standing {
 interface Plan {
   title: string;
   action: 'post' | 'edit' | 'repost' | 'none' | 'refused';
+  posted_by_other?: string;
   reason: string;
   message: string;
   reply: string[] | null;
@@ -139,7 +140,7 @@ function PublishDialog({ service, MessagePreview }: { service: string; MessagePr
     setSending(true);
     setProblem(null);
     try {
-      const done = await host.post<Done>('publish', { file: target.file, destination });
+      const done = await host.post<Done>('publish', { file: target.file, destination, ...(plan?.posted_by_other ? { take_over: true } : {}) });
       if (done.reply_error) host.toast(t('replyFailed'), 'error', done.reply_error);
       else host.toast(t('sent', { destination }), 'success');
       close();
@@ -161,7 +162,7 @@ function PublishDialog({ service, MessagePreview }: { service: string; MessagePr
           <Button onClick={close}>{sendable ? t('cancel') : t('close')}</Button>
           {sendable && (
             <Button variant="primary" disabled={sending} data-testid="publish-send" onClick={() => void send()}>
-              {t('send', { service })}
+              {plan?.posted_by_other ? t('sendAnyway') : t('send', { service })}
             </Button>
           )}
         </Row>
@@ -206,9 +207,13 @@ function PublishDialog({ service, MessagePreview }: { service: string; MessagePr
             <Text size="sm" weight="strong" block>
               {said}
             </Text>
-            <Text size="sm" tone="muted" block>
-              {plan.reason}
-            </Text>
+            {plan.posted_by_other ? (
+              <Notice tone="warn">{plan.reason}</Notice>
+            ) : (
+              <Text size="sm" tone="muted" block>
+                {plan.reason}
+              </Text>
+            )}
             {plan.reply && (
               <Stack gap="xs">
                 <Text size="sm" block>

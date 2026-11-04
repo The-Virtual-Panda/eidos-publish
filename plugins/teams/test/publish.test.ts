@@ -226,6 +226,42 @@ test('REQ8: a deleted message is replaced and recorded', async () => {
   assert.match(published(), new RegExp(`message_id: ${done.message_id}\\n`));
 });
 
+test("REQ5: another person's message is warned about, and a second message goes only when confirmed", async () => {
+  await signIn(true);
+  const name = await destination();
+  await ok(['publish', DOC, '--to', name]);
+  const file = path.join(sandbox.root, '.eidos/plugins/teams/published.yaml');
+  const theirs = readFileSync(file, 'utf8').replace(new RegExp(`(${name}:[\\s\\S]*?by: ).*`), '$1janelle');
+  writeFileSync(file, theirs);
+  fake.graph.length = 0;
+
+  assert.equal((JSON.parse(await ok(['publish', DOC, '--to', name, '--dry-run', '--json'])) as { action: string }).action, 'none', 'an unchanged file has nothing to warn about');
+  writeDoc('# Overview\n\nSomeone else changed this.\n');
+  for (const edit of [true, false]) {
+    await signIn(edit);
+    const plan = JSON.parse(await ok(['publish', DOC, '--to', name, '--dry-run', '--json'])) as { action: string; reason: string; posted_by_other: string };
+    assert.equal(plan.action, 'repost');
+    assert.equal(plan.posted_by_other, 'janelle');
+    assert.match(plan.reason, /janelle posted this message/);
+    assert.match(await ok(['publish', DOC, '--to', name, '--dry-run']), /asks you to confirm/);
+    const unconfirmed = await run(['publish', DOC, '--to', name]);
+    assert.equal(unconfirmed.status, 1);
+    assert.match(unconfirmed.stderr, /--take-over/);
+    await assert.rejects(sandbox.route('POST', 'publish', { body: { file: DOC, destination: name } }), /--take-over/);
+  }
+  assert.equal(fake.graph.length, 0, 'nothing reached Teams without the confirmation');
+  assert.equal(readFileSync(file, 'utf8'), theirs, 'the record is untouched');
+
+  const taken = JSON.parse(await ok(['publish', DOC, '--to', name, '--json', '--take-over'])) as { outcome: string };
+  assert.equal(taken.outcome, 'reposted');
+  assert.deepEqual(
+    fake.graph.map((request) => request.method),
+    ['POST'],
+  );
+  assert.doesNotMatch(readFileSync(file, 'utf8'), new RegExp(`${name}:[\\s\\S]*?by: janelle`));
+  writeDoc('# Overview\n\nFirst words.\n');
+});
+
 test('REQ8, REQ21: a 403 and a 500 post nothing and record nothing, and say who and why', async () => {
   await signIn(true);
   const name = await destination();

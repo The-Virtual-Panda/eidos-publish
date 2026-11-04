@@ -3,6 +3,7 @@
 // services differ.
 import type { Host } from 'eidosmd/plugin';
 import { ProviderError } from './errors.ts';
+import { confirm } from './prompt.ts';
 import {
   carryOut,
   destinations,
@@ -161,18 +162,20 @@ export function registerPublish(host: Host, provider: Provider, api: PublishApi)
         }),
       );
 
-    command
+    const publish = command
       .command('publish')
       .argument('<file>', "a blueprint's id or path, or a top-level doc's path")
       .requiredOption('--to <destination>', 'the destination')
       .option('--dry-run', 'print the message and the decision, and send nothing; no sign-in needed')
       .option('--force', 'edit the message even though the file did not change')
       .option('--no-reply', 'edit without replying in the thread')
-      .option('--json', 'print as JSON')
+      .option('--json', 'print as JSON');
+    if (provider.postsAsPerson) publish.option('--take-over', "post a second message under your name in place of someone else's, without asking");
+    publish
       .description('post the file as one message, or edit that message when the file changed')
       .action(
-        action(async (file: string, options: { to: string; dryRun?: boolean; force?: boolean; reply?: boolean; json?: boolean }) => {
-          const planOptions: PlanOptions = { ...(options.force ? { force: true } : {}), ...(options.reply === false ? { noReply: true } : {}) };
+        action(async (file: string, options: { to: string; dryRun?: boolean; force?: boolean; reply?: boolean; json?: boolean; takeOver?: boolean }) => {
+          const planOptions: PlanOptions = { ...(options.force ? { force: true } : {}), ...(options.reply === false ? { noReply: true } : {}), ...(options.takeOver ? { takeOver: true } : {}) };
           if (options.dryRun) {
             const plan = api.plan(file, options.to, planOptions);
             if (options.json) json({ ...plan, dry_run: true });
@@ -182,9 +185,18 @@ export function registerPublish(host: Host, provider: Provider, api: PublishApi)
               );
               if (plan.action !== 'none' && plan.action !== 'refused') print(`\n${plan.message}`);
               if (plan.reply) print(`\nWould reply in the thread:\n${plan.reply.map((line) => `  ${line}`).join('\n')}`);
+              if (plan.posted_by_other) print('\nPublishing asks you to confirm this first; --take-over skips that.');
             }
             if (plan.action === 'refused') process.exitCode = 1;
             return;
+          }
+          const planned = api.plan(file, options.to, planOptions);
+          if (planned.posted_by_other && !options.takeOver && process.stdin.isTTY) {
+            if (!(await confirm(`${planned.reason}\nPost a second message anyway?`))) {
+              print('Nothing was sent.');
+              return;
+            }
+            planOptions.takeOver = true;
           }
           const done = await api.publish(file, options.to, planOptions);
           if (options.json) json(done);

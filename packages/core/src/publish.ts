@@ -93,6 +93,8 @@ export interface Plan {
   limit: number;
   reply: string[] | null;
   url: string | null;
+  // who posted the message, when sending would duplicate it, which the person confirms with `takeOver`
+  posted_by_other?: string;
 }
 
 export interface Done {
@@ -110,6 +112,7 @@ export interface Done {
 export interface PlanOptions {
   force?: boolean;
   noReply?: boolean;
+  takeOver?: boolean;
 }
 
 export interface StatusRow {
@@ -234,8 +237,18 @@ export function planFor(host: Host, provider: Provider, ref: string, name: strin
   if (!sent) return { ...base, action: 'post', reason: 'It has not been published here yet.' };
   if (sent.channel !== destination.key) return { ...base, action: 'post', url: null, reason: `${destination.name} now points at another channel, so it takes a new message.` };
   const current = sent.digest === digest(file.message);
-  if (current && !options.force) return { ...base, action: 'none', reason: 'The message already matches the file.' };
   const account = provider.account();
+  // Only a message's author can edit it, so anything sent here is a second message: the person is told who posted it and says so before it goes.
+  const me = [host.actingUser()?.alias, account?.name].filter(Boolean);
+  const postedByOther = provider.postsAsPerson && Boolean(sent.by) && me.length > 0 && !me.includes(sent.by);
+  if (current && !options.force && !(postedByOther && options.takeOver)) return { ...base, action: 'none', reason: 'The message already matches the file.' };
+  if (postedByOther)
+    return {
+      ...base,
+      action: 'repost',
+      posted_by_other: sent.by,
+      reason: `${sent.by} posted this message, and only they can edit it, so this posts a second message under your name and theirs stays in the channel. Asking them to publish it again keeps it as one message.`,
+    };
   if (account && !account.can_edit) return { ...base, action: 'repost', reason: provider.cannotEdit };
   const before = unpackText(sent.text);
   const change = before === null ? null : changeBetween(before, file.plain);
@@ -259,6 +272,7 @@ export async function carryOut(host: Host, provider: Provider, ref: string, name
   const destination = destinationNamed(host, provider, name);
   const done = { file: plan.file, destination: plan.destination, reason: plan.reason };
   if (plan.action === 'refused') throw new ProviderError(`${plan.destination}: ${plan.file}: ${plan.reason}`, null);
+  if (plan.posted_by_other && !options.takeOver) throw new ProviderError(`${plan.destination}: ${plan.file}: ${plan.reason} Publish with --take-over to post it anyway.`, null);
   const sent = readPublished(host)[file.key]?.[destination.name];
   if (plan.action === 'none') return { ...done, outcome: 'unchanged', message_id: sent?.message_id ?? null, url: sent?.url ?? null, replied: false };
   let sender: Sender;
@@ -283,7 +297,7 @@ export async function carryOut(host: Host, provider: Provider, ref: string, name
     return { ...done, outcome, reason, message_id: posted.id, url: posted.url, replied: false };
   };
   if (plan.action === 'post') return postNew('posted', plan.reason);
-  if (plan.action === 'repost') return postNew('reposted', plan.reason);
+  if (plan.action === 'repost') return postNew('reposted', plan.posted_by_other ? `It replaces ${plan.posted_by_other}'s as the message kept here; theirs stays in the channel.` : plan.reason);
   const message = sent!;
   try {
     await sender.edit(destination, message.message_id, file.message);
