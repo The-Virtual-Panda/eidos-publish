@@ -84,6 +84,24 @@ test('REQ2: a channel needs only its link, and a name of any words is made fit',
   assert.deepEqual((await sandbox.route<{ destinations: Array<{ name: string }> }>('GET', 'state')).destinations.map((held) => held.name), before);
 });
 
+test('the page reads and writes its settings in words, and a local one stays local', async () => {
+  const defaults = await sandbox.route<{ reply: boolean; reply_min_chars: number; client_id: string; tenant: string }>('GET', 'options');
+  assert.equal(defaults.reply, true);
+  assert.equal(defaults.reply_min_chars, 120);
+  const changed = await sandbox.route<{ reply: boolean; reply_min_chars: number }>('POST', 'options', { body: { name: 'reply_min_chars', value: '40' } });
+  assert.equal(changed.reply_min_chars, 40);
+  assert.equal((await sandbox.route<{ reply: boolean }>('POST', 'options', { body: { name: 'reply', value: false } })).reply, false);
+  await assert.rejects(sandbox.route('POST', 'options', { body: { name: 'reply_min_chars', value: 'lots' } }), /whole number/);
+  await assert.rejects(sandbox.route('POST', 'options', { body: { name: 'destinations', value: [] } }), /no setting called/);
+  await sandbox.route('POST', 'options', { body: { name: 'tenant', value: ' tenant-9 ' } });
+  assert.equal((await sandbox.route<{ tenant: string }>('GET', 'options')).tenant, 'tenant-9');
+  assert.match(readFileSync(path.join(sandbox.root, '.eidos/plugins/teams/local.yaml'), 'utf8'), /tenant-9/);
+  assert.doesNotMatch(readFileSync(path.join(sandbox.root, '.eidos/plugins/teams/settings.yaml'), 'utf8'), /tenant-9/);
+  await sandbox.route('POST', 'options', { body: { name: 'tenant', value: '' } });
+  await sandbox.route('POST', 'options', { body: { name: 'reply', value: true } });
+  await sandbox.route('POST', 'options', { body: { name: 'reply_min_chars', value: 120 } });
+});
+
 test('REQ5: a dry run needs no sign-in and sends nothing', async () => {
   await ok(['logout']);
   const name = await destination();

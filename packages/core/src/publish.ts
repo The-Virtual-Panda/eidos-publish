@@ -52,6 +52,8 @@ export interface Provider {
   cannotEdit: string;
   signIn: string;
   // a person posts as themselves, so a refused edit may be someone else's message
+  // settings a person fills in as words on the plugin's page, beside the ones every plugin has
+  textSettings?: string[];
   postsAsPerson: boolean;
   sender(): Promise<Sender>;
   logout(): boolean;

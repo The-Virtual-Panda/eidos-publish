@@ -34,6 +34,11 @@ const en = {
   remove: 'Remove',
   removeConfirm: 'Remove {name}? Messages already sent stay in the channel.',
   noChannelsYet: 'No channels yet.',
+  replies: 'Replies',
+  replyLabel: 'Reply in the thread when a message changes',
+  replyHint: 'Editing a message notifies nobody, so a short reply says what changed. This applies to everyone in the project.',
+  replySizeLabel: 'Smallest change worth a reply',
+  replySizeHint: 'In characters added or removed. A heading added, removed, or renamed always gets a reply.',
 };
 
 const es: Partial<typeof en> = {
@@ -70,6 +75,11 @@ const es: Partial<typeof en> = {
   remove: 'Quitar',
   removeConfirm: '¿Quitar {name}? Los mensajes ya enviados permanecen en el canal.',
   noChannelsYet: 'Aún no hay canales.',
+  replies: 'Respuestas',
+  replyLabel: 'Responder en el hilo cuando cambia un mensaje',
+  replyHint: 'Editar un mensaje no avisa a nadie, así que una breve respuesta dice qué cambió. Se aplica a todo el proyecto.',
+  replySizeLabel: 'Cambio mínimo para responder',
+  replySizeHint: 'En caracteres añadidos o eliminados. Añadir, eliminar o renombrar un encabezado siempre genera una respuesta.',
 };
 
 const pt: Partial<typeof en> = {
@@ -106,6 +116,11 @@ const pt: Partial<typeof en> = {
   remove: 'Remover',
   removeConfirm: 'Remover {name}? As mensagens já enviadas permanecem no canal.',
   noChannelsYet: 'Ainda não há canais.',
+  replies: 'Respostas',
+  replyLabel: 'Responder na conversa quando uma mensagem muda',
+  replyHint: 'Editar uma mensagem não avisa ninguém, então uma breve resposta diz o que mudou. Vale para todo o projeto.',
+  replySizeLabel: 'Menor alteração que gera resposta',
+  replySizeHint: 'Em caracteres adicionados ou removidos. Adicionar, remover ou renomear um título sempre gera resposta.',
 };
 
 export const PUBLISH_STRINGS = { en, es, pt };

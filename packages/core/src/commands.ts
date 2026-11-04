@@ -27,12 +27,17 @@ export interface FileStanding {
   rows: Array<{ destination: string; state: 'current' | 'changed' | 'unpublished'; url: string | null; at: string | null; by: string | null }>;
 }
 
+export type PublishOptions = { reply: boolean; reply_min_chars: number } & Record<string, unknown>;
+
 export interface PublishApi {
   destinations(): Destination[];
   account(): Account | null;
   // the name is optional: a channel's link usually says it
   connect(name: string | undefined, link: string): Promise<Destination>;
   disconnect(name: string): Promise<void>;
+  // what the plugin's page draws itself, in words
+  options(): PublishOptions;
+  setOption(name: string, value: unknown): Promise<PublishOptions>;
   logout(): boolean;
   plan(file: string, destination: string, options?: PlanOptions): Plan;
   publish(file: string, destination: string, options?: PlanOptions): Promise<Done>;
@@ -56,6 +61,15 @@ export const action =
       process.exitCode = 1;
     }
   };
+
+const optionsOf = (host: Host, provider: Provider): PublishOptions => {
+  const settings = host.settings();
+  return {
+    reply: settings.get<boolean>('reply') !== false,
+    reply_min_chars: Number(settings.get<number>('reply_min_chars') ?? 120),
+    ...Object.fromEntries((provider.textSettings ?? []).map((name) => [name, String(settings.get<string>(name) ?? '')])),
+  };
+};
 
 // What a destination is called in `--to` and the settings file, from any words.
 const slugged = (words: string): string =>
@@ -90,6 +104,19 @@ export function publishApi(host: Host, provider: Provider): PublishApi {
       await host.settings().set('destinations', [...held, destination]);
       host.emit('changed', {});
       return destination;
+    },
+    options: () => optionsOf(host, provider),
+    setOption: async (name, value) => {
+      const settings = host.settings();
+      if (name === 'reply') await settings.set(name, value === true);
+      else if (name === 'reply_min_chars') {
+        const chars = Number(value);
+        if (!Number.isInteger(chars) || chars < 0) throw new ProviderError('The size of a change is a whole number of characters.', null);
+        await settings.set(name, chars);
+      } else if (provider.textSettings?.includes(name)) await settings.set(name, String(value ?? '').trim());
+      else throw new ProviderError(`There is no setting called ${name}.`, null);
+      host.emit('changed', {});
+      return optionsOf(host, provider);
     },
     disconnect: async (name) => {
       const held = destinations(host);

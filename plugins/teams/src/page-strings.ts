@@ -18,6 +18,15 @@ const en = {
   refusedTitle: 'Your organization has to approve this app',
   refusedHint: 'Send your administrator this address. It asks for {permissions}.',
   linkHint: 'In Teams, choose Get link to channel on the channel, then paste it here.',
+  orgApp: "Your organization's app",
+  orgAppOffer: 'Most people can skip this',
+  orgAppOfferHint: "If your organization won't approve an outside app, it can register its own in Microsoft Entra ID and use that instead.",
+  orgAppUse: 'Use our own app',
+  orgAppHint: 'Sign in through an app your organization registered. These are only saved on this computer. Leave them empty to use the standard app.',
+  orgAppClient: 'Application (client) ID',
+  orgAppClientHint: "From the app's Overview page in Microsoft Entra.",
+  orgAppTenant: 'Directory (tenant) ID',
+  orgAppTenantHint: 'Optional. Leave empty to allow any work or school account.',
 };
 
 const es: Partial<typeof en> = {
@@ -38,6 +47,15 @@ const es: Partial<typeof en> = {
   refusedTitle: 'Tu organización tiene que aprobar esta aplicación',
   refusedHint: 'Envía esta dirección a tu administrador. Solicita {permissions}.',
   linkHint: 'En Teams, elige Obtener vínculo al canal en el canal y pégalo aquí.',
+  orgApp: 'La aplicación de tu organización',
+  orgAppOffer: 'La mayoría puede omitir esto',
+  orgAppOfferHint: 'Si tu organización no aprueba una aplicación externa, puede registrar la suya en Microsoft Entra ID y usarla en su lugar.',
+  orgAppUse: 'Usar nuestra aplicación',
+  orgAppHint: 'Inicia sesión con una aplicación que registró tu organización. Estos datos solo se guardan en este equipo. Déjalos vacíos para usar la aplicación estándar.',
+  orgAppClient: 'Id. de aplicación (cliente)',
+  orgAppClientHint: 'En la página Información general de la aplicación en Microsoft Entra.',
+  orgAppTenant: 'Id. de directorio (inquilino)',
+  orgAppTenantHint: 'Opcional. Déjalo vacío para permitir cualquier cuenta profesional o educativa.',
 };
 
 const pt: Partial<typeof en> = {
@@ -58,6 +76,15 @@ const pt: Partial<typeof en> = {
   refusedTitle: 'Sua organização precisa aprovar este aplicativo',
   refusedHint: 'Envie este endereço ao seu administrador. Ele solicita {permissions}.',
   linkHint: 'No Teams, escolha Obter link para o canal no canal e cole aqui.',
+  orgApp: 'O aplicativo da sua organização',
+  orgAppOffer: 'A maioria pode pular isto',
+  orgAppOfferHint: 'Se sua organização não aprovar um aplicativo externo, ela pode registrar o próprio no Microsoft Entra ID e usá-lo.',
+  orgAppUse: 'Usar nosso aplicativo',
+  orgAppHint: 'Entre por um aplicativo registrado pela sua organização. Estes dados ficam salvos só neste computador. Deixe em branco para usar o aplicativo padrão.',
+  orgAppClient: 'ID do aplicativo (cliente)',
+  orgAppClientHint: 'Na página Visão geral do aplicativo no Microsoft Entra.',
+  orgAppTenant: 'ID do diretório (locatário)',
+  orgAppTenantHint: 'Opcional. Deixe em branco para permitir qualquer conta corporativa ou de estudante.',
 };
 
 export const TEAMS_STRINGS = { en, es, pt };

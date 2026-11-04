@@ -28,5 +28,7 @@ export function mountPublish(host: AppHost, api: PublishApi): void {
   host.route('POST', 'publish', (request) => answer(() => api.publish(text(request.body['file']), text(request.body['destination']), options(request.body))));
   host.route('POST', 'connect', (request) => answer(() => api.connect(text(request.body['name']), text(request.body['link']))));
   host.route('POST', 'disconnect', (request) => answer(async () => (await api.disconnect(text(request.body['name'])), {})));
+  host.route('GET', 'options', () => answer(() => api.options()));
+  host.route('POST', 'options', (request) => answer(() => api.setOption(text(request.body['name']), request.body['value'])));
   host.route('POST', 'logout', () => answer(() => ({ signed_out: api.logout() })));
 }

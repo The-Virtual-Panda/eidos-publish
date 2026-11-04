@@ -25,6 +25,7 @@ import {
   usePluginHost,
   type PagePlugin,
   type PluginHost,
+  Switch,
 } from 'eidosmd/page';
 import { PUBLISH_STRINGS } from './page-strings.ts';
 
@@ -316,7 +317,57 @@ function PublishedView({ service }: { service: string }): JSX.Element {
 
 export type SignIn = (props: { account: Account | null; reload: () => void }) => JSX.Element;
 
-function PublishSettings({ SignIn, linkNamesChannel }: { SignIn: SignIn; linkNamesChannel: boolean }): JSX.Element {
+function ReplySettings(): JSX.Element | null {
+  const host = usePluginHost();
+  const hostRef = useHostRef(host);
+  const { t } = host;
+  const [options, setOptions] = useState<{ reply: boolean; reply_min_chars: number } | null>(null);
+  const [size, setSize] = useState('');
+  const take = useCallback((next: { reply: boolean; reply_min_chars: number }) => {
+    setOptions(next);
+    setSize(String(next.reply_min_chars));
+  }, []);
+  useEffect(() => {
+    hostRef.current.get<{ reply: boolean; reply_min_chars: number }>('options').then(take, (cause) => hostRef.current.toast(t('failed'), 'error', reason(cause)));
+  }, [hostRef, take, t]);
+  const save = (name: string, value: unknown): void => {
+    host.post<{ reply: boolean; reply_min_chars: number }>('options', { name, value }).then(take, (cause) => {
+      host.toast(t('failed'), 'error', reason(cause));
+      if (options) setSize(String(options.reply_min_chars));
+    });
+  };
+  if (!options) return <SkeletonBar height={80} />;
+  return (
+    <Card>
+      <SettingsHead>{t('replies')}</SettingsHead>
+      <SettingRow
+        label={t('replyLabel')}
+        hint={t('replyHint')}
+        control={<Switch aria-label={t('replyLabel')} checked={options.reply} data-testid="publish-reply" onChange={(event: { target: HTMLInputElement }) => save('reply', event.target.checked)} />}
+      />
+      {options.reply && (
+        <SettingRow
+          label={t('replySizeLabel')}
+          hint={t('replySizeHint')}
+          control={
+            <Input
+              aria-label={t('replySizeLabel')}
+              type="number"
+              value={size}
+              data-testid="publish-reply-size"
+              onChange={(event: { target: HTMLInputElement }) => setSize(event.target.value)}
+              onBlur={() => {
+                if (size !== String(options.reply_min_chars)) save('reply_min_chars', size);
+              }}
+            />
+          }
+        />
+      )}
+    </Card>
+  );
+}
+
+function PublishSettings({ SignIn, linkNamesChannel, Extra }: { SignIn: SignIn; linkNamesChannel: boolean; Extra?: (() => JSX.Element | null) | undefined }): JSX.Element {
   const host = usePluginHost();
   const hostRef = useHostRef(host);
   const { t } = host;
@@ -406,6 +457,8 @@ function PublishSettings({ SignIn, linkNamesChannel }: { SignIn: SignIn; linkNam
           </Button>
         </Row>
       </Card>
+      <ReplySettings />
+      {Extra && <Extra />}
     </Stack>
   );
 }
@@ -419,12 +472,15 @@ export interface PublishPage {
   Icon: () => JSX.Element;
   // a channel's link says what it is called, so nobody is asked to name it
   linkNamesChannel?: boolean;
+  // the plugin's own settings, under the shared ones, and the names of those it draws
+  Extra?: () => JSX.Element | null;
+  drawn?: string[];
   // what people will see, in the form the service shows it
   MessagePreview: (props: { message: string }) => JSX.Element;
 }
 
 // A plugin's page half: the core's words with its own over them, and its service throughout.
-export function publishPage({ name, service, strings, SignIn, Icon, MessagePreview, linkNamesChannel = false }: PublishPage): PagePlugin {
+export function publishPage({ name, service, strings, SignIn, Icon, MessagePreview, linkNamesChannel = false, Extra, drawn = [] }: PublishPage): PagePlugin {
   return {
     name,
     strings: {
@@ -446,7 +502,7 @@ export function publishPage({ name, service, strings, SignIn, Icon, MessagePrevi
       },
     ],
     layer: () => <PublishDialog service={service} MessagePreview={MessagePreview} />,
-    settings: () => <PublishSettings SignIn={SignIn} linkNamesChannel={linkNamesChannel} />,
-    settingsDrawn: ['destinations'],
+    settings: () => <PublishSettings SignIn={SignIn} linkNamesChannel={linkNamesChannel} Extra={Extra} />,
+    settingsDrawn: ['destinations', 'reply', 'reply_min_chars', ...drawn],
   };
 }

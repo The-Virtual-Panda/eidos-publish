@@ -67,6 +67,7 @@ const entry: CliEntry = {
       cannotEdit: 'Your sign-in cannot edit messages, so this posts a new one and the old one stays. Run `eidos teams login --edit` to edit in place; your administrator must approve it.',
       signIn: 'Sign in with `eidos teams login --edit` to send it.',
       postsAsPerson: true,
+      textSettings: ['client_id', 'tenant'],
       sender: async () => {
         const signIn = held.get();
         if (!signIn) throw new ProviderError('You are not signed in to Teams. Run `eidos teams login`.', null);
