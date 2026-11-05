@@ -16,6 +16,8 @@ export interface Destination {
   name: string;
   // the channel's name where its link gives one
   channel_name: string;
+  // the team the channel is in, where the service has teams and it could be looked up
+  team_name?: string;
   // what says it is the same channel as a message was sent to
   key: string;
   // what a first post here shares, as it was last chosen
@@ -38,6 +40,8 @@ export interface Account {
   can_edit: boolean;
   // false when this sign-in predates the permissions mentions take
   can_mention?: boolean;
+  // false when this sign-in predates the permission a team's name takes
+  can_name_teams?: boolean;
 }
 
 export interface Sender {
@@ -61,6 +65,10 @@ export interface Provider {
   // a channel from what a person pastes, or a refusal saying what to paste
   readChannel(link: string): Omit<Destination, 'name'>;
   channelHelp: string;
+  // the teams of these channels, by each channel's key, leaving out one it could not find; null when this sign-in cannot ask
+  teamNames?(channels: Array<Omit<Destination, 'name'>>): Promise<Record<string, string> | null>;
+  // what a person can do so a channel shows its team, or nothing when there is nothing they can do
+  teamNameHelp?(): string;
   account(): Account | null;
   // why a person signed in like this posts a new message rather than editing, when they do
   cannotEdit: string;

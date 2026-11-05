@@ -25,7 +25,13 @@ export async function answer<T>(work: () => Promise<T> | T): Promise<T> {
 }
 
 export function mountPublish(host: AppHost, api: PublishApi): void {
-  host.route('GET', 'state', () => answer(() => ({ destinations: api.destinations(), account: api.account() })));
+  host.route('GET', 'state', () =>
+    answer(() => {
+      // in the background: the page draws now and redraws when a name arrives
+      void api.fillTeamNames();
+      return { destinations: api.destinations(), account: api.account() };
+    }),
+  );
   host.route('GET', 'standing', (request) => answer(() => api.standing(request.query.get('file') ?? '')));
   host.route('POST', 'plan', (request) => answer(() => api.plan(text(request.body['file']), text(request.body['destination']), options(request.body))));
   host.route('POST', 'publish', (request) => answer(() => api.publish(text(request.body['file']), text(request.body['destination']), options(request.body))));

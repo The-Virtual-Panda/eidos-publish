@@ -7,7 +7,7 @@ import { credentials } from '../../../packages/core/src/credentials.ts';
 import { ProviderError } from '../../../packages/core/src/errors.ts';
 import { destinations, type Account, type Provider } from '../../../packages/core/src/publish.ts';
 import { teamsHtml } from './html.ts';
-import { canEdit, canMention, canMentionTags, DEFAULT_CLIENT_ID, graph, openInBrowser, permissionsFor, pollDeviceCode, readChannelLink, refresh, startBrowserSignIn, startDeviceCode, TEAMS_LIMIT_BYTES, type Channel, type Graph, type Poll, type Sign } from './microsoft.ts';
+import { canEdit, canMention, canMentionTags, canNameTeams, DEFAULT_CLIENT_ID, graph, openInBrowser, permissionsFor, pollDeviceCode, readChannelLink, refresh, startBrowserSignIn, startDeviceCode, TEAMS_LIMIT_BYTES, type Channel, type Graph, type Poll, type Sign } from './microsoft.ts';
 
 interface TeamsSignIn {
   refresh_token: string;
@@ -35,7 +35,7 @@ const entry: CliEntry = {
     const held = credentials<TeamsSignIn>('teams');
     const accountOf = (signIn: TeamsSignIn): Account => {
       const editing = canEdit(signIn.scopes);
-      return { name: signIn.name || signIn.username, detail: editing ? 'can edit messages' : 'posts and replies only', can_edit: editing, can_mention: canMention(signIn.scopes) };
+      return { name: signIn.name || signIn.username, detail: editing ? 'can edit messages' : 'posts and replies only', can_edit: editing, can_mention: canMention(signIn.scopes), can_name_teams: canNameTeams(signIn.scopes) };
     };
     const signFor = (permissions: string[]): Sign => {
       const known = destinations(host).find((destination) => destination['tenant'])?.['tenant'] as string | undefined;
@@ -59,6 +59,29 @@ const entry: CliEntry = {
         return { channel_name: read.channel_name, key: `${read.team}/${read.channel}`, team: read.team, channel: read.channel, tenant: read.tenant };
       },
       channelHelp: "the channel's link from Teams (Get link to channel)",
+      teamNames: async (channels) => {
+        const signIn = held.get();
+        if (!signIn || !canNameTeams(signIn.scopes)) return null;
+        let client: Graph;
+        try {
+          client = await signedIn(signIn);
+        } catch {
+          return null;
+        }
+        const teams = new Map<string, string>();
+        const names: Record<string, string> = {};
+        for (const channel of channels) {
+          const team = String(channel['team']);
+          // a team this person cannot read is left unnamed: the channel still works
+          if (!teams.has(team)) teams.set(team, await client.teamName(team).catch(() => ''));
+          if (teams.get(team)) names[String(channel['key'])] = teams.get(team) as string;
+        }
+        return names;
+      },
+      teamNameHelp: () => {
+        const signIn = held.get();
+        return signIn && canNameTeams(signIn.scopes) ? '' : `${signIn ? 'Sign in again' : 'Sign in'} with \`eidos teams login\` to show which team it is in.`;
+      },
       account: () => {
         const signIn = held.get();
         return signIn ? accountOf(signIn) : null;
@@ -120,6 +143,7 @@ const entry: CliEntry = {
         const signIn = { refresh_token: tokens.refresh_token, scopes: tokens.scopes, name: tokens.name, username: tokens.username, tenant: tokens.tenant, client_id: sign.clientId };
         held.set(signIn);
         host.emit('changed', {});
+        await api.fillTeamNames();
         return { state: 'done', account: accountOf(signIn) };
       },
     };

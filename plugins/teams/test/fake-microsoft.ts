@@ -17,6 +17,10 @@ export interface FakeMicrosoft {
   // every Graph request, in order
   graph: Array<{ method: string; path: string; body: { body: { contentType: string; content: string }; mentions?: Array<{ id: number; mentionText: string; mentioned: Record<string, Record<string, string>> }> } }>;
   messages: Map<string, string>;
+  // the teams Graph knows, by id
+  teams: Map<string, string>;
+  // every team asked about, in order
+  teamLookups: string[];
   // what the next Graph requests answer, consumed one by one; empty, they succeed
   failNext: Array<{ status: number; retryAfter?: string; message?: string }>;
   // the answers a device code poll gives, consumed one by one; empty, signed in
@@ -37,6 +41,8 @@ export async function startFakeMicrosoft(port = 0): Promise<FakeMicrosoft> {
     address: '',
     graph: [],
     messages: new Map(),
+    teams: new Map([['11111111-2222-3333-4444-555555555555', 'Engineering']]),
+    teamLookups: [],
     failNext: [],
     pollAnswers: [],
     authorizes: [],
@@ -87,12 +93,18 @@ export async function startFakeMicrosoft(port = 0): Promise<FakeMicrosoft> {
         if (answer) return send(response, answer.status, answer.body);
         const scope = (form['scope'] ?? [...state.forms].reverse().find((held) => held['scope'])?.['scope'] ?? '')
           .split(' ')
-          .filter((held) => /ChannelMessage|TeamworkTag|User\.ReadBasic/.test(held))
+          .filter((held) => /ChannelMessage|TeamworkTag|User\.ReadBasic|Team\.ReadBasic/.test(held))
           .join(' ');
         return send(response, 200, { access_token: ACCESS, refresh_token: form['grant_type'] === 'refresh_token' ? REFRESH_ROTATED : REFRESH, scope, id_token: idToken });
       }
       const body = (text ? JSON.parse(text) : {}) as FakeMicrosoft['graph'][number]['body'];
       assertBearer(request);
+      const team = /\/teams\/([^/]+)$/.exec(url.pathname);
+      if (request.method === 'GET' && team) {
+        state.teamLookups.push(team[1]!);
+        const named = state.teams.get(team[1]!);
+        return named ? send(response, 200, { displayName: named }) : send(response, 404, { error: { message: 'no such team' } });
+      }
       if (request.method === 'GET' && url.pathname.endsWith('/tags')) return send(response, 200, { value: [{ id: 'tag-1', displayName: 'Project Managers' }, { id: 'tag-2', displayName: 'Designers' }] });
       if (request.method === 'GET' && url.pathname.endsWith('/users')) {
         state.lookups.push(request.headers.consistencylevel === 'eventual' ? url.search : `no consistency level: ${url.search}`);

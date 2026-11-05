@@ -18,7 +18,7 @@ eidos teams publish B-X05 --to general --dry-run
 eidos teams publish B-X05 --to general
 ```
 
-A message is posted as you. Posting and replying need `ChannelMessage.Send`, which you can usually consent to yourself. Editing needs `ChannelMessage.ReadWrite`, which Microsoft requires an administrator to approve. `eidos teams login` asks for the first; `eidos teams login --edit` asks for both. Until editing is approved, a change posts a new message and the old one stays.
+A message is posted as you. Posting and replying need `ChannelMessage.Send`, which you can usually consent to yourself. Editing needs `ChannelMessage.ReadWrite`, which Microsoft requires an administrator to approve. `eidos teams login` asks for the first; `eidos teams login --edit` asks for both. A sign-in also asks for `Team.ReadBasic.All`, so a channel shows as Engineering / General rather than just General; if you signed in before this, sign in again to see team names. Until editing is approved, a change posts a new message and the old one stays.
 
 Only the person who posted a message can edit it, so when someone else's file changes they publish it again. If you publish a message another person posted, the plugin warns you who posted it and asks before posting a second message under your name; theirs stays. In a script, `--take-over` says yes.
 

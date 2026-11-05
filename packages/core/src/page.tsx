@@ -28,17 +28,20 @@ import {
   Switch,
   Checkbox,
 } from 'eidosmd/page';
+import { channelLabel } from './label.ts';
 import { PUBLISH_STRINGS } from './page-strings.ts';
 
 interface Destination {
   name: string;
   channel_name: string;
+  team_name?: string;
 }
 export interface Account {
   name: string;
   detail: string;
   can_edit: boolean;
   can_mention?: boolean;
+  can_name_teams?: boolean;
 }
 interface Mention {
   kind: 'person' | 'tag' | 'channel';
@@ -53,6 +56,7 @@ interface State {
 }
 interface StandingRow {
   destination: string;
+  label: string;
   state: 'current' | 'changed' | 'unpublished';
   url: string | null;
 }
@@ -196,6 +200,11 @@ function PublishDialog({ service, mentionable, MessagePreview }: { service: stri
     );
   }, [hostRef, target]);
 
+  // a channel's team may arrive after the dialog opens; the channel chosen stays chosen
+  usePluginEvent('changed', () => {
+    if (target) hostRef.current.get<State>('state').then((state) => setDestinations(state.destinations), () => undefined);
+  });
+
   useEffect(() => {
     if (!target || !destination) return;
     let live = true;
@@ -275,7 +284,7 @@ function PublishDialog({ service, mentionable, MessagePreview }: { service: stri
               <Select aria-label={t('destination')} value={destination} onChange={(event: { target: HTMLSelectElement }) => setDestination(event.target.value)}>
                 {(destinations ?? []).map((held) => (
                   <option key={held.name} value={held.name}>
-                    {held.channel_name || held.name}
+                    {channelLabel(held)}
                   </option>
                 ))}
               </Select>
@@ -415,7 +424,7 @@ function PublishedView({ service }: { service: string }): JSX.Element {
         <Stack key={row.destination} gap="xs">
           <Row justify="between">
             <Text size="sm" weight="strong">
-              {row.destination}
+              {row.label}
             </Text>
             <Badge tone={row.state === 'current' ? 'ok' : row.state === 'changed' ? 'warn' : 'default'}>{label[row.state]}</Badge>
           </Row>
@@ -557,6 +566,11 @@ function PublishSettings({ SignIn, linkNamesChannel, mentionable }: { SignIn: Si
         <Text size="sm" tone="muted" block>
           {t('channelsHint')}
         </Text>
+        {account?.can_name_teams === false && destinations.some((destination) => !destination.team_name) && (
+          <Text size="sm" tone="muted" block>
+            {t('teamNamesSignIn')}
+          </Text>
+        )}
         {destinations.length === 0 && (
           <Text size="sm" tone="faint" block>
             {t('noChannelsYet')}
@@ -565,13 +579,13 @@ function PublishSettings({ SignIn, linkNamesChannel, mentionable }: { SignIn: Si
         {destinations.map((destination) => (
           <SettingRow
             key={destination.name}
-            label={destination.channel_name || destination.name}
+            label={channelLabel(destination)}
             control={
               <Button
                 disabled={busy}
                 onClick={() =>
                   void act(async () => {
-                    if (await host.dialog.confirm(t('removeConfirm', { name: destination.name }), { danger: true, ok: t('remove') })) await host.post('disconnect', { name: destination.name });
+                    if (await host.dialog.confirm(t('removeConfirm', { name: channelLabel(destination) }), { danger: true, ok: t('remove') })) await host.post('disconnect', { name: destination.name });
                     load();
                   })
                 }

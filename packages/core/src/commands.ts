@@ -3,6 +3,7 @@
 // services differ.
 import type { Host } from 'eidosmd/plugin';
 import { ProviderError } from './errors.ts';
+import { channelLabel } from './label.ts';
 import { confirm } from './prompt.ts';
 import {
   carryOut,
@@ -41,6 +42,8 @@ export interface PublishApi {
   account(): Account | null;
   // the name is optional: a channel's link usually says it
   connect(name: string | undefined, link: string): Promise<Destination>;
+  // looks up the team of each channel saved without one; never fails, since a channel works without it
+  fillTeamNames(): Promise<void>;
   disconnect(name: string): Promise<void>;
   // what the plugin's page draws itself, in words
   // who a message could mention, for the page's picker
@@ -96,6 +99,21 @@ const slugged = (words: string): string =>
     .replace(/^-+|-+$/g, '');
 
 export function publishApi(host: Host, provider: Provider): PublishApi {
+  // the channels already asked about, so a team that cannot be found is not asked for again every time the page loads
+  const asked = new Set<string>();
+  let filling: Promise<void> | null = null;
+  const fill = async (): Promise<void> => {
+    const missing = destinations(host).filter((destination) => !destination.team_name && !asked.has(destination.key));
+    if (missing.length === 0) return;
+    const names = await provider.teamNames?.(missing);
+    if (!names) return;
+    for (const destination of missing) asked.add(destination.key);
+    if (!missing.some((destination) => names[destination.key])) return;
+    // read again: the lookup took a while, and a channel may have been added or removed meanwhile
+    const next = destinations(host).map((destination) => (!destination.team_name && names[destination.key] ? { ...destination, team_name: names[destination.key] as string } : destination));
+    await host.settings().set('destinations', next);
+    host.emit('changed', {});
+  };
   return {
     destinations: () => destinations(host),
     account: () => provider.account(),
@@ -110,15 +128,24 @@ export function publishApi(host: Host, provider: Provider): PublishApi {
         if (taken(named)) throw new ProviderError(`There is already a destination called ${named}.`, null);
       } else {
         const already = held.find((destination) => destination.key === read.key);
-        if (already) throw new ProviderError(`This channel is already added, as ${already.channel_name || already.name}.`, null);
+        if (already) throw new ProviderError(`This channel is already added, as ${channelLabel(already)}.`, null);
         const base = slugged(String(read.channel_name ?? '')) || slugged(String(read.key)) || 'channel';
         named = base;
         for (let n = 2; taken(named); n += 1) named = `${base}-${n}`;
       }
-      const destination = { name: named, ...read, channel_name: read.channel_name || (given !== named ? given : '') } as Destination;
+      const team = (await provider.teamNames?.([read]))?.[String(read.key)];
+      const destination = { name: named, ...read, channel_name: read.channel_name || (given !== named ? given : ''), ...(team ? { team_name: team } : {}) } as Destination;
       await host.settings().set('destinations', [...held, destination]);
       host.emit('changed', {});
       return destination;
+    },
+    fillTeamNames: () => {
+      filling ??= fill()
+        .catch(() => undefined)
+        .finally(() => {
+          filling = null;
+        });
+      return filling;
     },
     searchMentions: async (name, query) => {
       if (!provider.searchMentions) return [];
@@ -159,9 +186,9 @@ export function publishApi(host: Host, provider: Provider): PublishApi {
       const held = readPublished(host)[file.key] ?? {};
       const rows = destinations(host).map((destination) => {
         const sent = held[destination.name];
-        if (!sent) return { destination: destination.name, state: 'unpublished' as const, url: null, at: null, by: null };
+        if (!sent) return { destination: destination.name, label: channelLabel(destination), state: 'unpublished' as const, url: null, at: null, by: null };
         const plan = planFor(host, provider, file.key, destination.name);
-        return { destination: destination.name, state: plan.action === 'none' ? ('current' as const) : ('changed' as const), url: sent.url, at: sent.at, by: sent.by };
+        return { destination: destination.name, label: channelLabel(destination), state: plan.action === 'none' ? ('current' as const) : ('changed' as const), url: sent.url, at: sent.at, by: sent.by };
       });
       return { file: file.key, title: file.title, rows };
     },
@@ -250,7 +277,9 @@ export function registerPublish(host: Host, provider: Provider, api: PublishApi)
         action(async (name: string | undefined, options: { channel: string; json?: boolean }) => {
           const destination = await api.connect(name, options.channel);
           if (options.json) return json(destination);
-          print(`Added ${destination.name}${destination.channel_name ? `, the ${destination.channel_name} channel` : ''}.`);
+          print(`Added ${destination.name}${destination.channel_name ? `, the ${destination.channel_name} channel${destination.team_name ? ` in ${destination.team_name}` : ''}` : ''}.`);
+          const help = destination.team_name ? '' : provider.teamNameHelp?.();
+          if (help) print(help);
         }),
       );
 
@@ -274,7 +303,7 @@ export function registerPublish(host: Host, provider: Provider, api: PublishApi)
           const rows = api.destinations();
           if (options.json) return json(rows);
           if (rows.length === 0) print(`No destinations yet. Add one with \`eidos ${word} connect <name> --channel <link>\`.`);
-          for (const row of rows) print(`${row.name}  ${row.channel_name}`.trimEnd());
+          for (const row of rows) print(row.channel_name ? `${row.name}  ${channelLabel(row)}` : row.name);
         }),
       );
 

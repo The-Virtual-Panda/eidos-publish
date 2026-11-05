@@ -22,6 +22,8 @@ const EDIT = 'ChannelMessage.ReadWrite';
 // which like editing takes an administrator, so it is asked for along with editing and a plain sign-in still works.
 const TAGS = 'TeamworkTag.Read';
 const PEOPLE = 'User.ReadBasic.All';
+// A channel's link holds its team's id but not its name, and many channels are called General. A person may consent to it.
+const TEAM_NAMES = 'Team.ReadBasic.All';
 const TIMEOUT_MS = 30_000;
 const RETRIES = 4;
 const BROWSER_SIGN_IN_SECONDS = 900;
@@ -54,7 +56,8 @@ export const canEdit = (scopes: string[]): boolean => scopes.some((scope) => sho
 const has = (scopes: string[], wanted: string): boolean => scopes.some((scope) => shortScope(scope).toLowerCase() === wanted.toLowerCase());
 export const canMention = (scopes: string[]): boolean => has(scopes, PEOPLE);
 export const canMentionTags = (scopes: string[]): boolean => has(scopes, TAGS);
-export const permissionsFor = (edit: boolean): string[] => (edit ? [SEND, PEOPLE, EDIT, TAGS] : [SEND, PEOPLE]);
+export const canNameTeams = (scopes: string[]): boolean => has(scopes, TEAM_NAMES);
+export const permissionsFor = (edit: boolean): string[] => (edit ? [SEND, PEOPLE, TEAM_NAMES, EDIT, TAGS] : [SEND, PEOPLE, TEAM_NAMES]);
 const scopeParam = (scopes: string[]): string => [...scopes.map((scope) => `https://graph.microsoft.com/${shortScope(scope)}`), 'offline_access', 'openid', 'profile'].join(' ');
 
 export function adminConsentAddress(tenant: string, clientId: string, permissions: string[]): string {
@@ -161,7 +164,7 @@ const tokensOf = (body: Record<string, unknown>): Tokens => ({
   scopes: String(body['scope'] ?? '')
     .split(/\s+/)
     .map(shortScope)
-    .filter((scope) => /^(ChannelMessage\.|TeamworkTag\.|User\.ReadBasic)/i.test(scope)),
+    .filter((scope) => /^(ChannelMessage\.|TeamworkTag\.|User\.ReadBasic|Team\.ReadBasic)/i.test(scope)),
   ...who(body['id_token']),
 });
 
@@ -339,6 +342,7 @@ export interface Graph {
   edit(channel: Channel, message: string, html: string, mentions?: Mention[]): Promise<void>;
   search(channel: Channel, channelName: string, query: string, withTags: boolean): Promise<Mention[]>;
   reply(channel: Channel, message: string, html: string): Promise<void>;
+  teamName(team: string): Promise<string>;
 }
 
 const escapeName = (name: string): string => name.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -399,6 +403,7 @@ export function graph(accessToken: string, wait: (ms: number) => Promise<void> =
   };
   const channelPath = (channel: Channel): string => `/teams/${encodeURIComponent(channel.team)}/channels/${encodeURIComponent(channel.channel)}/messages`;
   return {
+    teamName: async (team) => String((await send('GET', `/teams/${encodeURIComponent(team)}?$select=displayName`))['displayName'] ?? ''),
     post: async (channel, html, mentions) => {
       const body = await send('POST', channelPath(channel), html, mentions);
       return { id: String(body['id']), url: typeof body['webUrl'] === 'string' ? body['webUrl'] : null };

@@ -82,6 +82,59 @@ test('REQ2: a channel needs only its link, and a name of any words is made fit',
   assert.deepEqual((await sandbox.route<{ destinations: Array<{ name: string }> }>('GET', 'state')).destinations.map((held) => held.name), before);
 });
 
+test('a channel shows its team, looked up with the sign-in, and still adds without one', async () => {
+  const link = (id: string): string => `https://teams.microsoft.com/l/channel/19%3A${id}%40thread.tacv2/General?groupId=11111111-2222-3333-4444-555555555555`;
+  const team = (name: string): Promise<string | undefined> => sandbox.route<{ destinations: Array<{ name: string; team_name?: string }> }>('GET', 'state').then((state) => state.destinations.find((held) => held.name === name)?.team_name);
+
+  // signed out: added all the same, saying how to see its team
+  await ok(['logout']);
+  const signedOut = await ok(['connect', 'team-out', '--channel', link('team-out')]);
+  assert.match(signedOut, /Added team-out, the General channel\.\n/);
+  assert.match(signedOut, /Sign in with `eidos teams login` to show which team/);
+  assert.equal(await team('team-out'), undefined);
+
+  // a sign-in from before the permission: told to sign in again, and nothing is asked of Microsoft
+  await signIn(false);
+  const held = JSON.parse(readFileSync(credentials(), 'utf8')) as { scopes: string[] };
+  assert.ok(held.scopes.includes('Team.ReadBasic.All'));
+  writeFileSync(credentials(), JSON.stringify({ ...held, scopes: held.scopes.filter((scope) => scope !== 'Team.ReadBasic.All') }));
+  assert.match(await ok(['connect', 'team-old', '--channel', link('team-old')]), /Sign in again with `eidos teams login`/);
+  assert.equal((await sandbox.route<{ account: { can_name_teams: boolean } }>('GET', 'state')).account.can_name_teams, false);
+
+  // signing in again names the channels added without a team
+  await signIn(false);
+  assert.equal(await team('team-out'), 'Engineering');
+  assert.equal(await team('team-old'), 'Engineering');
+
+  // signed in: named as it is added, shown wherever the channel is listed
+  const added = await ok(['connect', 'team-in', '--channel', link('team-in')]);
+  assert.match(added, /Added team-in, the General channel in Engineering\.\n$/);
+  assert.match(await ok(['destinations']), /team-in {2}Engineering \/ General/);
+  await assert.rejects(ok(['connect', '--channel', link('team-in')]), /already added, as Engineering \/ General/);
+
+  // a channel saved without a team, as a teammate's older sign-in leaves one, is named when the page next loads
+  const current = readFileSync(credentials(), 'utf8');
+  const parsed = JSON.parse(current) as { scopes: string[] };
+  writeFileSync(credentials(), JSON.stringify({ ...parsed, scopes: parsed.scopes.filter((scope) => scope !== 'Team.ReadBasic.All') }));
+  await ok(['connect', 'team-shared', '--channel', link('team-shared')]);
+  writeFileSync(credentials(), current);
+  await team('team-shared');
+  for (let tries = 0; tries < 50 && (await team('team-shared')) === undefined; tries += 1) await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(await team('team-shared'), 'Engineering');
+
+  // a team that cannot be found leaves the channel added, under its own name, and the page does not keep asking
+  const unknown = 'https://teams.microsoft.com/l/channel/19%3Ateam-gone%40thread.tacv2/General?groupId=99999999-2222-3333-4444-555555555555';
+  assert.match(await ok(['connect', 'team-gone', '--channel', unknown]), /Added team-gone, the General channel\.\n$/);
+  assert.equal(await team('team-gone'), undefined);
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  const asked = fake.teamLookups.filter((id) => id.startsWith('99999999')).length;
+  assert.equal(await team('team-gone'), undefined);
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.equal(fake.teamLookups.filter((id) => id.startsWith('99999999')).length, asked);
+
+  for (const name of ['team-out', 'team-old', 'team-in', 'team-shared', 'team-gone']) await ok(['disconnect', name]);
+});
+
 test('the page reads and writes its settings in words, and a local one stays local', async () => {
   const defaults = await sandbox.route<{ reply: boolean; reply_min_chars: number }>('GET', 'options');
   assert.equal(defaults.reply, true);
@@ -247,7 +300,8 @@ test('REQ12: a sign-in keeps its token in the owner-only file, and asks for only
   assert.match(scope, /offline_access/);
   const file = credentials();
   assert.equal(statSync(file).mode & 0o777, 0o600);
-  assert.equal((JSON.parse(readFileSync(file, 'utf8')) as { refresh_token: string }).refresh_token, REFRESH);
+  // the sign-in names the channels earlier tests left without a team, which may already have turned the token over
+  assert.ok([REFRESH, REFRESH_ROTATED].includes((JSON.parse(readFileSync(file, 'utf8')) as { refresh_token: string }).refresh_token));
   fake.forms.length = 0;
   await signIn(true);
   assert.match(fake.forms[0]?.['scope'] ?? '', /ChannelMessage\.ReadWrite/);
