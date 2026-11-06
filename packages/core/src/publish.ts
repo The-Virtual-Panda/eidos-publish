@@ -61,6 +61,7 @@ export interface Provider {
   limitUnit: 'bytes' | 'characters';
   render(parsed: Parsed): string;
   // a short reply from its lines: the sections added, removed, and changed
+  // the lines of `replyLines`: read them with `replyTree`, an item under its section
   renderReply(lines: string[]): string;
   // a channel from what a person pastes, or a refusal saying what to paste
   readChannel(link: string): Omit<Destination, 'name'>;
@@ -121,6 +122,8 @@ export interface Plan {
   size: number;
   limit: number;
   reply: string[] | null;
+  // an edit too small to reply on its own: what the reply would say, for a person to choose to post
+  reply_offered?: string[];
   url: string | null;
   // who posted the message, when sending would duplicate it, which the person confirms with `takeOver`
   posted_by_other?: string;
@@ -143,6 +146,7 @@ export interface Done {
 export interface PlanOptions {
   force?: boolean;
   noReply?: boolean;
+  postReply?: boolean;
   takeOver?: boolean;
   // chosen for a first post, and kept for that message and the channel's next one
   properties?: string[];
@@ -300,9 +304,11 @@ export function planFor(host: Host, provider: Provider, ref: string, name: strin
   const before = unpackText(sent.text);
   const change = before === null ? null : changeBetween(before, file.plain);
   const settings = host.settings();
-  const replying = change !== null && !current && !options.noReply && settings.get<boolean>('reply') !== false && worthReplying(change, Number(settings.get<number>('reply_min_chars') ?? 120));
+  const replyable = change !== null && !current && !options.noReply && settings.get<boolean>('reply') !== false;
+  const replying = replyable && (options.postReply === true || worthReplying(change, Number(settings.get<number>('reply_min_chars') ?? 120)));
+  const offered = replyable && !replying && change.added_chars + change.removed_chars > 0;
   const reason = current ? 'The file did not change; --force edits the message anyway.' : 'The file changed since the last publish.';
-  return { ...base, action: 'edit', reason: account ? reason : `${reason} ${provider.signIn}`, reply: replying && change ? replyLines(change) : null };
+  return { ...base, action: 'edit', reason: account ? reason : `${reason} ${provider.signIn}`, reply: replying ? replyLines(change) : null, ...(offered ? { reply_offered: replyLines(change) } : {}) };
 }
 
 // A failure names the destination, the file, and what the provider said (REQ21).

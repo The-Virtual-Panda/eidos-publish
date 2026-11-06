@@ -1,5 +1,6 @@
 // A file as the HTML of a Teams channel message (Publish REQ7, REQ16, REQ17).
 import type { Token, Tokens } from 'marked';
+import { REPLY_TITLE, replyTree } from '../../../packages/core/src/change.ts';
 import { COMMENT, decodeEntities, isTask, safeHref, withoutBox, type Parsed } from '../../../packages/core/src/render.ts';
 
 // An entity already written stays one; it reads as its character and is never markup.
@@ -92,3 +93,9 @@ export function teamsHtml(parsed: Parsed): string {
   const properties = parsed.properties.length === 0 ? '' : `<p>${parsed.properties.map((property) => `<strong>${escape(property.label)}:</strong> ${escape(property.value)}`).join('<br>')}</p>`;
   return `<h1>${escape(parsed.title)}</h1>${properties}${blocksHtml(parsed.tokens)}`;
 }
+
+// A reply's lines as a list, an item nested under its section (Publish REQ26). The lines are plain text, so every `&` in them is one.
+export const teamsReply = (lines: string[]): string => {
+  const items = replyTree(lines).map(({ text, items: nested }) => `<li>${escapeCode(text)}${nested.length === 0 ? '' : `<ul>${nested.map((item) => `<li>${escapeCode(item)}</li>`).join('')}</ul>`}</li>`);
+  return `<p><strong>${REPLY_TITLE}</strong></p><ul>${items.join('')}</ul>`;
+};

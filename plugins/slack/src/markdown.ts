@@ -4,6 +4,7 @@
 // one parse rather than sent as the file holds it, so nothing the file holds becomes
 // a mention, a broadcast, or a link it should not be.
 import type { Token, Tokens } from 'marked';
+import { REPLY_TITLE, replyTree } from '../../../packages/core/src/change.ts';
 import { COMMENT, decodeEntities, isTask, safeHref, withoutBox, type Parsed } from '../../../packages/core/src/render.ts';
 
 // Slack's own rule for its control characters, which also keeps `<@U123>` and `<!channel>` from being read as one.
@@ -108,4 +109,7 @@ function blocks(tokens: Token[]): string[] {
 export const slackMarkdown = (parsed: Parsed): string => [`# ${escapeText(parsed.title)}`, ...(parsed.properties.length === 0 ? [] : [parsed.properties.map((property) => `**${escapeText(property.label)}:** ${escapeText(property.value)}`).join('  \n')]), ...blocks(parsed.tokens)].join('\n\n');
 
 // A reply goes as plain `text`, which a thread takes as a matter of course.
-export const slackReply = (lines: string[]): string => ['*Updated*', ...lines.map((line) => `• ${broadcasts(controls(line))}`)].join('\n');
+export const slackReply = (lines: string[]): string => {
+  const safe = (line: string): string => broadcasts(controls(line));
+  return [`*${REPLY_TITLE}*`, ...replyTree(lines).flatMap(({ text, items }) => [`• ${safe(text)}`, ...items.map((item) => `    ◦ ${safe(item)}`)])].join('\n');
+};

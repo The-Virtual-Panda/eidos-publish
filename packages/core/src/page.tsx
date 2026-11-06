@@ -5,6 +5,7 @@
 // plugin's own sign-in above them. Nothing sends until the person has seen what the
 // dry run would send.
 import { useCallback, useEffect, useRef, useState, type JSX } from 'react';
+import { isNested, REPLY_TITLE } from './change.ts';
 import {
   Badge,
   Button,
@@ -73,6 +74,7 @@ interface Plan {
   reason: string;
   message: string;
   reply: string[] | null;
+  reply_offered?: string[];
 }
 interface Done {
   url: string | null;
@@ -174,6 +176,8 @@ function PublishDialog({ service, mentionable, MessagePreview }: { service: stri
   // what the person chose for a first post, null until they touch it, which leaves the channel's last choice
   const [properties, setProperties] = useState<string[] | null>(null);
   const [mentions, setMentions] = useState<Mention[] | null>(null);
+  // whether the update goes in the thread, for this publish alone; null until they touch it, which leaves it on when the change is big enough to reply
+  const [postUpdate, setPostUpdate] = useState<boolean | null>(null);
 
   useEffect(() => {
     openDialog = (file, chosen) => {
@@ -183,6 +187,7 @@ function PublishDialog({ service, mentionable, MessagePreview }: { service: stri
       setProblem(null);
       setProperties(null);
       setMentions(null);
+      setPostUpdate(null);
     };
     return () => {
       openDialog = null;
@@ -226,12 +231,14 @@ function PublishDialog({ service, mentionable, MessagePreview }: { service: stri
   const first = plan?.first;
   const chosenProperties = properties ?? first?.chosen ?? [];
   const chosenMentions = mentions ?? first?.mentions ?? [];
+  const update = plan?.reply ?? plan?.reply_offered ?? null;
+  const posting = postUpdate ?? Boolean(plan?.reply);
   const close = (): void => setTarget(null);
   const send = async (): Promise<void> => {
     setSending(true);
     setProblem(null);
     try {
-      const done = await host.post<Done>('publish', { file: target.file, destination, ...(plan?.posted_by_other ? { take_over: true } : {}), ...(first ? { properties: chosenProperties, mentions: chosenMentions } : {}) });
+      const done = await host.post<Done>('publish', { file: target.file, destination, ...(plan?.posted_by_other ? { take_over: true } : {}), ...(plan?.reply && !posting ? { no_reply: true } : {}), ...(plan?.reply_offered && posting ? { post_reply: true } : {}), ...(first ? { properties: chosenProperties, mentions: chosenMentions } : {}) });
       if (done.reply_error) host.toast(t('replyFailed'), 'error', done.reply_error);
       else host.toast(t('sent', { destination }), 'success');
       close();
@@ -281,7 +288,10 @@ function PublishDialog({ service, mentionable, MessagePreview }: { service: stri
           <SettingRow
             label={t('destination')}
             control={
-              <Select aria-label={t('destination')} value={destination} onChange={(event: { target: HTMLSelectElement }) => setDestination(event.target.value)}>
+              <Select aria-label={t('destination')} value={destination} onChange={(event: { target: HTMLSelectElement }) => {
+                setDestination(event.target.value);
+                setPostUpdate(null);
+              }}>
                 {(destinations ?? []).map((held) => (
                   <option key={held.name} value={held.name}>
                     {channelLabel(held)}
@@ -346,16 +356,28 @@ function PublishDialog({ service, mentionable, MessagePreview }: { service: stri
                 ))}
               </Stack>
             )}
-            {plan.reply && (
+            {update && (
               <Stack gap="xs">
-                <Text size="sm" block>
-                  {t('replyWillSay')}
-                </Text>
-                {plan.reply.map((line) => (
-                  <Text key={line} size="sm" tone="muted" block>
-                    {line}
+                <Row gap="sm">
+                  <Checkbox aria-label={t('replyPost')} checked={posting} data-testid="publish-post-update" onChange={(event: { target: HTMLInputElement }) => setPostUpdate(event.target.checked)} />
+                  <Text size="sm" weight="strong">
+                    {t('replyPost')}
                   </Text>
-                ))}
+                </Row>
+                {posting && (
+                  <Card>
+                    <Stack gap="xs" data-testid="publish-update">
+                      <Text size="sm" weight="strong" block>
+                        {REPLY_TITLE}
+                      </Text>
+                      {update.map((line, index) => (
+                        <Text key={`${index}:${line}`} size="sm" block>
+                          {isNested(line) ? `\u00a0\u00a0\u00a0\u00a0◦ ${line.trimStart()}` : `• ${line}`}
+                        </Text>
+                      ))}
+                    </Stack>
+                  </Card>
+                )}
               </Stack>
             )}
             {plan.action !== 'none' && plan.action !== 'refused' && (

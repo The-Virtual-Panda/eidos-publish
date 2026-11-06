@@ -2,7 +2,7 @@
 name: teams
 title: Publish to Microsoft Teams
 description: "Publish a blueprint or a top-level doc to a Microsoft Teams channel as one message, edited in place when the file changes, signed in as you and only when you ask"
-version: 0.3.0
+version: 0.4.0
 min_host: 0.18.0
 settings:
   - name: destinations

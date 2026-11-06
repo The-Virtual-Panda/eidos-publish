@@ -380,6 +380,60 @@ test('REQ4, REQ5, REQ6: post, nothing on no change, edit in place, and a reply p
   assert.equal(fake.graph[1]?.body.body.content, '<p><strong>Updated</strong></p><ul><li>Added: New section</li></ul>');
 });
 
+test('REQ5: the page shows the update a publish will post, and a person may leave it out', async () => {
+  await signIn(true);
+  const name = await destination();
+  await sandbox.route('POST', 'publish', { body: { file: DOC, destination: name } });
+  fake.graph.length = 0;
+  writeDoc('# Overview\n\nFirst words.\n\n## Another\n\nText.\n');
+  const plan = await sandbox.route<{ action: string; reply: string[] | null }>('POST', 'plan', { body: { file: DOC, destination: name } });
+  assert.equal(plan.action, 'edit');
+  assert.deepEqual(plan.reply, ['Added: Another']);
+  assert.equal(fake.graph.length, 0);
+  const left = await sandbox.route<{ replied: boolean }>('POST', 'publish', { body: { file: DOC, destination: name, no_reply: true } });
+  assert.equal(left.replied, false);
+  assert.deepEqual(
+    fake.graph.map((request) => request.method),
+    ['PATCH'],
+  );
+});
+
+test('REQ6: a small edit offers its update and posts it only when a person chooses to', async () => {
+  await signIn(true);
+  const name = await destination();
+  await sandbox.route('POST', 'publish', { body: { file: DOC, destination: name } });
+  fake.graph.length = 0;
+  writeDoc('# Overview\n\nFirst word.\n');
+  const plan = await sandbox.route<{ reply: string[] | null; reply_offered?: string[] }>('POST', 'plan', { body: { file: DOC, destination: name } });
+  assert.equal(plan.reply, null);
+  assert.deepEqual(plan.reply_offered, ['Changed: Overview']);
+  const chosen = await sandbox.route<{ replied: boolean }>('POST', 'publish', { body: { file: DOC, destination: name, post_reply: true } });
+  assert.equal(chosen.replied, true);
+  assert.deepEqual(
+    fake.graph.map((request) => request.method),
+    ['PATCH', 'POST'],
+  );
+  fake.graph.length = 0;
+  writeDoc('# Overview\n\nFirst words.\n');
+  assert.equal((await sandbox.route<{ replied: boolean }>('POST', 'publish', { body: { file: DOC, destination: name } })).replied, false);
+  assert.deepEqual(
+    fake.graph.map((request) => request.method),
+    ['PATCH'],
+  );
+});
+
+test('REQ6: turning replies off for the project offers no update', async () => {
+  await signIn(true);
+  const name = await destination();
+  await sandbox.route('POST', 'publish', { body: { file: DOC, destination: name } });
+  await sandbox.route('POST', 'options', { body: { name: 'reply', value: false } });
+  writeDoc('# Overview\n\nFirst word.\n');
+  const plan = await sandbox.route<{ reply: string[] | null; reply_offered?: string[] }>('POST', 'plan', { body: { file: DOC, destination: name } });
+  await sandbox.route('POST', 'options', { body: { name: 'reply', value: true } });
+  assert.equal(plan.reply, null);
+  assert.equal(plan.reply_offered, undefined);
+});
+
 test('REQ5: --no-reply edits quietly, and --force edits an unchanged file', async () => {
   await signIn(true);
   const name = await destination();

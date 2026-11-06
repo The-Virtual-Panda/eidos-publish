@@ -34,6 +34,7 @@ test('REQ16: a file cannot forge a mention or a broadcast', () => {
   assert.equal(md('```\n<!here>\n```'), '# Title\n\n```\n&lt;!here&gt;\n```');
   assert.equal(slackMarkdown(parse('Body', 'x', '<!channel>')), '# &lt;!channel&gt;\n\nBody');
   assert.equal(slackReply(['Added: <!channel> @here']), '*Updated*\n• Added: &lt;!channel&gt; @⁠here');
+  assert.equal(slackReply(['Changed: A', '  Added: <!here>']), '*Updated*\n• Changed: A\n    ◦ Added: &lt;!here&gt;');
 });
 
 test('REQ16: a character meant literally stays literal', () => {

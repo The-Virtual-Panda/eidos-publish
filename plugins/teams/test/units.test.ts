@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import { changeBetween, measure, replyLines, worthReplying } from '../../../packages/core/src/change.ts';
 import { ProviderError } from '../../../packages/core/src/errors.ts';
 import { parse, plainText } from '../../../packages/core/src/render.ts';
-import { teamsHtml } from '../src/html.ts';
+import { teamsHtml, teamsReply } from '../src/html.ts';
 import { adminConsentAddress, canEdit, readChannelLink, startBrowserSignIn } from '../src/microsoft.ts';
 
 const html = (markdown: string, title = 'Title'): string => teamsHtml(parse(markdown, 'fallback', title));
@@ -74,7 +74,7 @@ test('REQ6: a change is big enough by its characters or by a heading', () => {
 });
 
 test('REQ6: a reply names sections and is never a diff', () => {
-  const change = { added_chars: 1, removed_chars: 1, sections_added: ['A'], sections_removed: [], items_added: [], items_removed: [], properties_changed: [], sections_changed: ['C'] };
+  const change = { added_chars: 1, removed_chars: 1, sections_added: ['A'], sections_removed: [], items: [], properties_changed: [], sections_changed: ['C'] };
   assert.deepEqual(replyLines(change), ['Added: A', 'Changed: C']);
 });
 
@@ -109,14 +109,59 @@ test('REQ13: the admin consent address names the tenant, the app, and the permis
 
 test('REQ6: a reply names the list items and the shared properties that changed', () => {
   const change = changeBetween('# Sync\nDate: Monday\n## Agenda\n- Budget\n- Vendors', '# Sync\nDate: Tuesday\n## Agenda\n- Budget\n- Hiring');
-  assert.deepEqual(change.items_added, ['Hiring']);
-  assert.deepEqual(change.items_removed, ['Vendors']);
+  assert.deepEqual(change.items, [{ section: 'Agenda', added: ['Hiring'], removed: ['Vendors'], edited: [] }]);
   assert.deepEqual(change.properties_changed, ['Date: Monday → Tuesday']);
   assert.equal(worthReplying(change, 1000), true);
-  const lines = replyLines(change);
-  assert.ok(lines.includes('Date: Monday → Tuesday'));
-  assert.ok(lines.includes('Added: Hiring'));
-  assert.ok(lines.includes('Removed: Vendors'));
+  assert.deepEqual(replyLines(change), ['Date: Monday → Tuesday', 'Changed: Agenda', '  Added: Hiring', '  Removed: Vendors']);
+});
+
+test('REQ26: each item sits under its section on its own line, however many there are', () => {
+  const before = '# Sync\n## Decisions\n- Keep, for now, the old plan\n## Actions\n- Sam: Ship';
+  const after = '# Sync\n## Decisions\n- Keep, for now, the old plan\n- Move, later, to weekly\n- Hire in spring\n## Actions\n- Sam: Ship\n- Kathey: Begin design';
+  assert.deepEqual(replyLines(changeBetween(before, after)), ['Changed: Decisions', '  Added: Move, later, to weekly', '  Added: Hire in spring', 'Changed: Actions', '  Added: Kathey: Begin design']);
+});
+
+test('REQ26: an item edited in place is said once, as it now reads', () => {
+  const kept = 'Tina: If investment transactions post early again, email us the exact steps taken.';
+  const change = changeBetween(`# Recap\n## Actions\n- ${kept}- {Name}: {What they will do}`, `# Recap\n## Actions\n- ${kept}`);
+  assert.deepEqual(change.items, [{ section: 'Actions', added: [], removed: [], edited: [kept] }]);
+  assert.deepEqual(replyLines(change), ['Changed: Actions', `  Edited: ${kept}`]);
+  const midway = changeBetween('# R\n## A\n- Harrison: Add investment transactions to the log', '# R\n## A\n- Harrison: Add all investment transactions to the log');
+  assert.deepEqual(midway.items[0]?.edited, ['Harrison: Add all investment transactions to the log']);
+});
+
+test('REQ26: a replaced item stays one removed and one added', () => {
+  const change = changeBetween('# R\n## A\n- Sam: Ship the deploy', '# R\n## A\n- Kathey: Write requirements');
+  assert.deepEqual(change.items, [{ section: 'A', added: ['Kathey: Write requirements'], removed: ['Sam: Ship the deploy'], edited: [] }]);
+});
+
+test('REQ26: a small edit to an item is no reason to reply, and an added or removed item is', () => {
+  const before = '# R\n## A\n- Ship the deploy on Friday';
+  assert.equal(worthReplying(changeBetween(before, before.replace('Friday', 'Monday')), 120), false);
+  assert.equal(worthReplying(changeBetween(before, `${before}\n- Hi`), 120), true);
+  assert.equal(worthReplying(changeBetween(`${before}\n- Hi`, before), 120), true);
+});
+
+test('REQ26: a long item is cut at a word so a reply stays short', () => {
+  const long = `Harrison: ${'investigate the records '.repeat(12)}`.trim();
+  const [, item] = replyLines(changeBetween('# R\n## A\n- First', `# R\n## A\n- First\n- ${long}`));
+  assert.ok((item ?? '').length <= 2 + 'Added: '.length + 141);
+  assert.match(item ?? '', /^ {2}Added: Harrison: investigate.* records…$/);
+});
+
+test('REQ26: a new section is named without its items, and a moved item is not news', () => {
+  assert.deepEqual(replyLines(changeBetween('# R\n## A\n- One', '# R\n## A\n- One\n## B\n- Two')), ['Added: B']);
+  assert.deepEqual(replyLines(changeBetween('# R\n## A\n- One\n## B\n- Two', '# R\n## A\n## B\n- Two\n- One')), ['Changed: A', 'Changed: B']);
+});
+
+test('REQ25: a list item above the first heading is an item, not a shared property', () => {
+  const change = changeBetween('# R\n- Sam: Ship', '# R\n- Kathey: Write');
+  assert.deepEqual(change.properties_changed, []);
+  assert.deepEqual(replyLines(change), ['Changed: R', '  Added: Kathey: Write', '  Removed: Sam: Ship']);
+});
+
+test('REQ26: a Teams reply nests the items and escapes them', () => {
+  assert.equal(teamsReply(['Added: B', 'Changed: A <1>', '  Added: x & y', '  Edited: z', 'Changed: C']), '<p><strong>Updated</strong></p><ul><li>Added: B</li><li>Changed: A &lt;1&gt;<ul><li>Added: x &amp; y</li><li>Edited: z</li></ul></li><li>Changed: C</li></ul>');
 });
 
 test('REQ12: a request to the sign-in port without its state neither ends the sign-in nor is answered', async () => {

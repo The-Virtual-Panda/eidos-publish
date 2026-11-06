@@ -6,7 +6,7 @@ import { action, automationSteps, print, publishApi, registerPublish, type Publi
 import { credentials } from '../../../packages/core/src/credentials.ts';
 import { ProviderError } from '../../../packages/core/src/errors.ts';
 import { destinations, type Account, type Provider } from '../../../packages/core/src/publish.ts';
-import { teamsHtml } from './html.ts';
+import { teamsHtml, teamsReply } from './html.ts';
 import { canEdit, canMention, canMentionTags, canNameTeams, DEFAULT_CLIENT_ID, graph, openInBrowser, permissionsFor, pollDeviceCode, readChannelLink, refresh, startBrowserSignIn, startDeviceCode, TEAMS_LIMIT_BYTES, type Channel, type Graph, type Poll, type Sign } from './microsoft.ts';
 
 interface TeamsSignIn {
@@ -27,8 +27,6 @@ export interface TeamsApi extends PublishApi {
   loginStart(edit: boolean, device?: boolean): Promise<LoginStart>;
   loginPoll(): Promise<LoginPoll>;
 }
-
-const escape = (text: string): string => text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
 const entry: CliEntry = {
   register(host: Host) {
@@ -53,7 +51,7 @@ const entry: CliEntry = {
       limit: TEAMS_LIMIT_BYTES,
       limitUnit: 'bytes',
       render: teamsHtml,
-      renderReply: (lines) => `<p><strong>Updated</strong></p><ul>${lines.map((line) => `<li>${escape(line)}</li>`).join('')}</ul>`,
+      renderReply: teamsReply,
       readChannel: (link) => {
         const read = readChannelLink(link);
         return { channel_name: read.channel_name, key: `${read.team}/${read.channel}`, team: read.team, channel: read.channel, tenant: read.tenant };

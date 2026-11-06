@@ -12,6 +12,7 @@ const options = (body: Record<string, unknown>): PlanOptions => ({
   ...(Array.isArray(body['mentions']) ? { mentions: body['mentions'].filter(isMention) } : {}),
   ...(body['force'] === true ? { force: true } : {}),
   ...(body['no_reply'] === true ? { noReply: true } : {}),
+  ...(body['post_reply'] === true ? { postReply: true } : {}),
   ...(body['take_over'] === true ? { takeOver: true } : {}),
 });
 
