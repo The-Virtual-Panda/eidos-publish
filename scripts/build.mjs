@@ -1,7 +1,7 @@
 // Builds each plugin's release files into plugins/<name>/dist/, the folder
 // Eidos MD loads it from: cli.js and app.js, CommonJS bundles whose one import
 // from the host, eidosmd/plugin, the host answers; page.js, whose react and
-// eidosmd/page imports the page answers; and manifest.yaml and instructions.md.
+// eidosmd/page imports the page answers; and manifest.yaml, instructions.md, and README.md.
 // The shared core is bundled into each, so a person installs one self-contained
 // plugin. A Registry install downloads only the files its listing pins, so the
 // release manifest also carries the guide as its `instructions`, and its
@@ -22,6 +22,7 @@ for (const name of readdirSync('plugins')) {
   mkdirSync(dist, { recursive: true });
   const copy = () => {
     copyFileSync(path.join(dir, 'instructions.md'), path.join(dist, 'instructions.md'));
+    copyFileSync(path.join(dir, 'README.md'), path.join(dist, 'README.md'));
     const guide = readFileSync(path.join(dir, 'instructions.md'), 'utf8').replace(/\s+$/, '');
     const block = guide
       .split('\n')
@@ -52,7 +53,7 @@ for (const name of readdirSync('plugins')) {
   const contexts = await Promise.all(builds.map((options) => context(options)));
   if (watching) {
     for (const held of contexts) await held.watch();
-    for (const file of ['manifest.yaml', 'instructions.md']) watch(path.join(dir, file), copy);
+    for (const file of ['manifest.yaml', 'instructions.md', 'README.md']) watch(path.join(dir, file), copy);
   } else {
     for (const held of contexts) {
       await held.rebuild();
