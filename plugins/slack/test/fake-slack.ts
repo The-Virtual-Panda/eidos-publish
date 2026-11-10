@@ -11,6 +11,8 @@ export interface FakeSlack {
   calls: Array<{ method: string; body: Record<string, unknown> }>;
   // what the next calls of a method answer, consumed one by one: an error code, or an HTTP status with Retry-After
   failNext: Array<{ method: string; error?: string; status?: number; retryAfter?: string }>;
+  // what conversations.info calls each channel; a channel not here is one the app cannot see
+  channelNames: Record<string, string>;
   close(): Promise<void>;
 }
 
@@ -40,11 +42,15 @@ export async function startFakeSlack(port = 0): Promise<FakeSlack> {
       if (method === 'auth.test') return send(200, { ok: true, team: 'Test Workspace', user: 'eidos_publish' });
       if (method === 'chat.postMessage') return send(200, { ok: true, channel: body['channel'], ts: `17000.${next++}` });
       if (method === 'chat.update') return send(200, { ok: true, ts: body['ts'] });
+      if (method === 'conversations.info') {
+        const name = state.channelNames[String(body['channel'])];
+        return send(200, name ? { ok: true, channel: { id: body['channel'], name } } : { ok: false, error: 'channel_not_found' });
+      }
       if (method === 'chat.getPermalink') return send(200, { ok: true, permalink: `https://test.slack.com/archives/${String(body['channel'])}/p${String(body['message_ts'])}` });
       return send(200, { ok: false, error: 'unknown_method' });
     })();
   });
-  const state: FakeSlack = { address: '', calls: [], failNext: [], close: () => new Promise((resolve) => server.close(() => resolve())) };
+  const state: FakeSlack = { address: '', calls: [], failNext: [], channelNames: { C0123ABCDE: 'product-updates' }, close: () => new Promise((resolve) => server.close(() => resolve())) };
   await new Promise<void>((resolve) => server.listen(port, '127.0.0.1', resolve));
   state.address = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   return state;

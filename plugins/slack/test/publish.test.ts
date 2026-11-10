@@ -28,6 +28,8 @@ const writeDoc = (text: string): void => writeFileSync(path.join(sandbox.root, D
 const destination = async (): Promise<string> => {
   const name = `dest-${(n += 1)}`;
   await ok(['connect', name, '--channel', `https://acme.slack.com/archives/${CHANNEL}`]);
+  // connecting asks Slack for the channel's name; a test counts only what publishing sends
+  fake.calls.length = 0;
   return name;
 };
 const publish = async (name: string, ...more: string[]): Promise<{ outcome: string; message_id: string; url: string; replied: boolean }> =>
@@ -69,6 +71,23 @@ test('REQ14: a token is kept only once Slack accepts it, owner-only, and never p
   assert.equal(said.includes(TOKEN), false);
   assert.equal(statSync(credentialsFile()).mode & 0o777, 0o600);
   assert.match(await ok(['whoami']), /Slack: Test Workspace, posts as eidos_publish/);
+});
+
+test('a channel added by its link alone is named from Slack, and one Slack will not name is never called by its id', async () => {
+  const named = JSON.parse(await ok(['connect', '--channel', `https://acme.slack.com/archives/${CHANNEL}`, '--json'])) as { name: string; channel_name: string };
+  assert.deepEqual([named.name, named.channel_name], ['product-updates', 'product-updates']);
+  assert.match(await ok(['destinations']), /^product-updates {2}product-updates$/m);
+  // an app made before it could read names
+  fake.failNext.push({ method: 'conversations.info', error: 'missing_scope' });
+  const unnamed = await ok(['connect', '--channel', 'C0999ZZZZZ']);
+  assert.match(unnamed, /Added slack-channel\.\nSlack did not say what the channel is called\./);
+  assert.equal(unnamed.includes('C0999ZZZZZ'), false);
+  // signed out, nothing is asked of Slack
+  await ok(['logout']);
+  fake.calls.length = 0;
+  assert.match(await ok(['connect', '--channel', 'C0888YYYYY']), /^Added slack-channel-2\./);
+  assert.deepEqual(methods(), []);
+  for (const name of ['product-updates', 'slack-channel', 'slack-channel-2']) await ok(['disconnect', name]);
 });
 
 test('REQ5: a dry run needs no sign-in and sends nothing', async () => {

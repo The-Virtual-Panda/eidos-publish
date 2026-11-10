@@ -66,6 +66,8 @@ export interface Provider {
   // a channel from what a person pastes, or a refusal saying what to paste
   readChannel(link: string): Omit<Destination, 'name'>;
   channelHelp: string;
+  // the channel's name, asked of the service when its link does not say it; '' when it cannot be found
+  channelName?(channel: Omit<Destination, 'name'>): Promise<string>;
   // the teams of these channels, by each channel's key, leaving out one it could not find; null when this sign-in cannot ask
   teamNames?(channels: Array<Omit<Destination, 'name'>>): Promise<Record<string, string> | null>;
   // what a person can do so a channel shows its team, or nothing when there is nothing they can do

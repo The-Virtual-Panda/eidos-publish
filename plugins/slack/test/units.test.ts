@@ -66,5 +66,5 @@ test('REQ14: the address makes the app with the manifest filled in and no more t
   const url = new URL(createAppAddress());
   assert.equal(url.searchParams.get('new_app'), '1');
   const manifest = JSON.parse(url.searchParams.get('manifest_json') ?? '{}') as { oauth_config: { scopes: { bot: string[] } } };
-  assert.deepEqual(manifest.oauth_config.scopes.bot, ['chat:write', 'chat:write.public']);
+  assert.deepEqual(manifest.oauth_config.scopes.bot, ['chat:write', 'chat:write.public', 'channels:read', 'groups:read']);
 });

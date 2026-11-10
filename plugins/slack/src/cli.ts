@@ -39,6 +39,11 @@ const entry: CliEntry = {
         return { channel_name: '', key: channel, channel };
       },
       channelHelp: "the channel's link from Slack (Copy link), or its id",
+      // signed out, a channel is added by its link alone and named after the service
+      channelName: async (read) => {
+        const signIn = held.get();
+        return signIn ? slackClient(signIn.token).channelName(String(read['channel'])) : '';
+      },
       account: () => {
         const signIn = held.get();
         return signIn ? accountOf(signIn) : null;

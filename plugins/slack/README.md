@@ -8,7 +8,7 @@ Before anything leaves your machine you see exactly what goes out: the channel, 
 
 - **One message per file.** The first publish posts it. Every publish after that edits the same message, so a link to it never goes stale.
 - **Changes people actually notice.** Editing a message notifies nobody, so a big enough change gets a short reply in the thread listing the sections and list items added, removed, and changed.
-- **Two permissions, nothing more.** It posts through a Slack app your workspace makes for itself, which can only write messages.
+- **Only what it needs.** It posts through a Slack app your workspace makes for itself, which can write messages and read channel names, and cannot read a single message.
 - **Private by design.** It runs on your machine and talks to Slack directly. Nothing is hosted, and nothing is sent unless you ask.
 
 ## Get started
@@ -19,7 +19,7 @@ In Eidos MD, open **Settings > Community plugins > Browse**, search for Slack, a
 
 ### 2. Create your Slack app
 
-Open the plugin's settings: **Settings > Community plugins**, then **Publish to Slack**. Under **Slack app**, choose **Create the app**. Slack opens with the app, Eidos Publish, already filled in. It asks for two permissions only: `chat:write` to post, edit, and reply, and `chat:write.public` to post in a public channel without being invited. Create it in your workspace and install it there. If your workspace asks for apps to be approved, a workspace admin approves the install first.
+Open the plugin's settings: **Settings > Community plugins**, then **Publish to Slack**. Under **Slack app**, choose **Create the app**. Slack opens with the app, Eidos Publish, already filled in. It asks for four permissions: `chat:write` to post, edit, and reply, `chat:write.public` to post in a public channel without being invited, and `channels:read` and `groups:read` to show a channel's name when you add it by its id. None of them reads a message. Create it in your workspace and install it there. If your workspace asks for apps to be approved, a workspace admin approves the install first.
 
 ### 3. Connect it
 
@@ -31,7 +31,7 @@ Channels are shared with the project, so here a teammate has already added two: 
 
 ### 4. Add a channel
 
-In Slack, choose **Copy link** on the channel. Back in Eidos MD, paste it into **Link to the channel**, give it a **Name (optional)** if you like, and choose **Add channel**. The channel's id works in place of the link. A public channel is ready at once; for a private channel, invite the app first with `/invite` in that channel.
+In Slack, choose **Copy link** on the channel. Back in Eidos MD, paste it into **Link to the channel**, give it a **Name (optional)** if you like, and choose **Add channel**. The channel's id works in place of the link. Left unnamed, it takes the channel's name from Slack. An app made before the plugin could read names can't look it up, so the channel is called slack-channel; create the app again to show names. A public channel is ready at once; for a private channel, invite the app first with `/invite` in that channel.
 
 ## Everyday use
 

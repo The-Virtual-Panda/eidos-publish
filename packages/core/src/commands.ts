@@ -118,7 +118,10 @@ export function publishApi(host: Host, provider: Provider): PublishApi {
     destinations: () => destinations(host),
     account: () => provider.account(),
     connect: async (name, link) => {
-      const read = provider.readChannel(link);
+      const fromLink = provider.readChannel(link);
+      // a channel's name is a nicety: one that cannot be found never stops it being added
+      const looked = fromLink.channel_name ? '' : await (provider.channelName?.(fromLink) ?? Promise.resolve('')).catch(() => '');
+      const read = looked ? { ...fromLink, channel_name: looked } : fromLink;
       const held = destinations(host);
       const taken = (candidate: string): boolean => held.some((destination) => destination.name.toLowerCase() === candidate);
       const given = (name ?? '').trim();
@@ -129,7 +132,8 @@ export function publishApi(host: Host, provider: Provider): PublishApi {
       } else {
         const already = held.find((destination) => destination.key === read.key);
         if (already) throw new ProviderError(`This channel is already added, as ${channelLabel(already)}.`, null);
-        const base = slugged(String(read.channel_name ?? '')) || slugged(String(read.key)) || 'channel';
+        // a channel whose name is not known is called after the service, never by its raw id
+        const base = slugged(String(read.channel_name ?? '')) || `${provider.command}-channel`;
         named = base;
         for (let n = 2; taken(named); n += 1) named = `${base}-${n}`;
       }
@@ -278,6 +282,7 @@ export function registerPublish(host: Host, provider: Provider, api: PublishApi)
           const destination = await api.connect(name, options.channel);
           if (options.json) return json(destination);
           print(`Added ${destination.name}${destination.channel_name ? `, the ${destination.channel_name} channel${destination.team_name ? ` in ${destination.team_name}` : ''}` : ''}.`);
+          if (!name && !destination.channel_name) print(`${service} did not say what the channel is called. To name it yourself, remove it and add it again with a name: \`eidos ${word} connect <name> --channel <link>\`.`);
           const help = destination.team_name ? '' : provider.teamNameHelp?.();
           if (help) print(help);
         }),

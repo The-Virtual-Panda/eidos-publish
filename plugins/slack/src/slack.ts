@@ -12,11 +12,12 @@ const RETRIES = 4;
 export const SLACK_LIMIT_CHARACTERS = 12_000;
 
 // The app a workspace makes for itself: what it may do, and nothing else. `chat:write`
-// posts, edits, and replies; `chat:write.public` reaches a public channel with no invite.
+// posts, edits, and replies; `chat:write.public` reaches a public channel with no invite;
+// `channels:read` and `groups:read` read a public or private channel's name, so one added by its id shows what it is called.
 export const APP_MANIFEST = {
   display_information: { name: 'Eidos Publish', description: 'Publishes Eidos blueprints to channels, when someone asks.' },
   features: { bot_user: { display_name: 'Eidos Publish', always_online: false } },
-  oauth_config: { scopes: { bot: ['chat:write', 'chat:write.public'] } },
+  oauth_config: { scopes: { bot: ['chat:write', 'chat:write.public', 'channels:read', 'groups:read'] } },
   settings: { org_deploy_enabled: false, socket_mode_enabled: false, token_rotation_enabled: false },
 };
 
@@ -86,6 +87,12 @@ export function slackClient(token: string, wait: (ms: number) => Promise<void> =
     whoAmI: async (): Promise<{ team: string; bot: string }> => {
       const answer = await call('auth.test', {});
       return { team: String(answer['team'] ?? ''), bot: String(answer['user'] ?? '') };
+    },
+    // '' when Slack will not say: an app made before it could read names, or a private channel it is not in
+    channelName: async (channel: string): Promise<string> => {
+      const answer = await call('conversations.info', { channel }).catch(() => null);
+      const found = (answer?.['channel'] as Answer | undefined)?.['name'];
+      return typeof found === 'string' ? found : '';
     },
     post: async (channel: string, message: string): Promise<{ id: string; url: string | null }> => {
       const answer = await call('chat.postMessage', { channel, markdown_text: message, unfurl_links: false, unfurl_media: false });
