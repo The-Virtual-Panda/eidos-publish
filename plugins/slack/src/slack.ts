@@ -57,15 +57,23 @@ function failureOf(code: string): ProviderError {
 
 type Answer = Record<string, unknown>;
 
+// Slack's read methods take their arguments form-encoded and answer a JSON body with invalid_arguments
+const READ_METHODS = new Set(['conversations.info', 'chat.getPermalink']);
+
 export function slackClient(token: string, wait: (ms: number) => Promise<void> = (ms) => new Promise((resolve) => setTimeout(resolve, ms))) {
   const call = async (method: string, body: Answer): Promise<Answer> => {
+    const form = READ_METHODS.has(method);
     for (let attempt = 0; ; attempt += 1) {
       let response: Response;
       try {
         response = await fetch(`${base()}/api/${method}`, {
           method: 'POST',
-          headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json; charset=utf-8', accept: 'application/json' },
-          body: JSON.stringify(body),
+          headers: {
+            authorization: `Bearer ${token}`,
+            'content-type': form ? 'application/x-www-form-urlencoded' : 'application/json; charset=utf-8',
+            accept: 'application/json',
+          },
+          body: form ? new URLSearchParams(Object.entries(body).map(([key, value]) => [key, String(value)])) : JSON.stringify(body),
           signal: AbortSignal.timeout(TIMEOUT_MS),
         });
       } catch (cause) {

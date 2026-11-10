@@ -6,6 +6,8 @@ import type { AddressInfo } from 'node:net';
 
 export const TOKEN = 'xoxb-fake-token-not-a-secret';
 
+const READ_METHODS = new Set(['conversations.info', 'chat.getPermalink']);
+
 export interface FakeSlack {
   address: string;
   calls: Array<{ method: string; body: Record<string, unknown> }>;
@@ -28,8 +30,11 @@ export async function startFakeSlack(port = 0): Promise<FakeSlack> {
         response.end(JSON.stringify(body));
       };
       if (request.headers.authorization !== `Bearer ${TOKEN}`) return send(200, { ok: false, error: 'invalid_auth' });
-      const body = (text ? JSON.parse(text) : {}) as Record<string, unknown>;
+      const form = String(request.headers['content-type'] ?? '').startsWith('application/x-www-form-urlencoded');
+      const body = (form ? Object.fromEntries(new URLSearchParams(text)) : text ? JSON.parse(text) : {}) as Record<string, unknown>;
       state.calls.push({ method, body });
+      // as the real Slack does, a read method takes its arguments form-encoded and answers a JSON body with invalid_arguments
+      if (READ_METHODS.has(method) && !form) return send(200, { ok: false, error: 'invalid_arguments' });
       const failing = state.failNext.findIndex((held) => held.method === method);
       if (failing >= 0) {
         const [fail] = state.failNext.splice(failing, 1);
