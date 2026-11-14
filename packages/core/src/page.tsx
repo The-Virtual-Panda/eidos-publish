@@ -14,19 +14,16 @@ import {
   Modal,
   Notice,
   Row,
-  SaveNotice,
   Select,
   SettingRow,
   SettingsHead,
   SkeletonBar,
   Stack,
   Text,
-  useDirty,
   useFileChanges,
   useOpen,
   usePluginEvent,
   usePluginHost,
-  type Dirty,
   type PagePlugin,
   type PluginHost,
   Switch,
@@ -95,24 +92,6 @@ const publishable = (open: { kind: string }): boolean => open.kind === 'blueprin
 
 // The dialog is opened from a palette command and from the view, wherever the person is, so it lives in the page's layer.
 let openDialog: ((file: string, destination?: string) => void) | null = null;
-
-// useDirty and SaveNotice came with Eidos MD 0.26.0: on it, choices made in the publish dialog and a channel typed
-// but not added are held as every page's unsaved work is, and closing or leaving them asks Save, Discard, or Keep
-// editing. An older host has neither, so there they are dropped on the way out, as they always were.
-const KIT_DRAFTS = typeof useDirty === 'function' && typeof SaveNotice === 'function';
-type DraftOptions = Parameters<typeof useDirty>[0];
-const useDraft: (options: DraftOptions) => Dirty = KIT_DRAFTS ? (options) => useDirty(options) : usePlainDraft;
-
-function usePlainDraft(options: DraftOptions): Dirty {
-  const save = async (): Promise<boolean> => {
-    try {
-      return (await options.save()) !== false;
-    } catch {
-      return false;
-    }
-  };
-  return { dirty: options.dirty, saving: false, failed: null, saved: false, save, discard: options.discard, leave: (then) => then() };
-}
 
 export function useHostRef(host: PluginHost): { current: PluginHost } {
   const ref = useRef(host);
@@ -271,63 +250,38 @@ function PublishDialog({ service, mentionable, SignIn, MessagePreview }: { servi
     };
   }, [hostRef, target, destination, properties, signedAt]);
 
+  if (!target) return null;
   const first = plan?.first;
   const chosenProperties = properties ?? first?.chosen ?? [];
   const chosenMentions = mentions ?? first?.mentions ?? [];
   const update = plan?.reply ?? plan?.reply_offered ?? null;
   const posting = postUpdate ?? Boolean(plan?.reply);
   const close = (): void => setTarget(null);
-  const deliver = async (): Promise<void> => {
-    if (!target) return;
-    const done = await host.post<Done>('publish', { file: target.file, destination, ...(plan?.posted_by_other ? { take_over: true } : {}), ...(plan?.reply && !posting ? { no_reply: true } : {}), ...(plan?.reply_offered && posting ? { post_reply: true } : {}), ...(first ? { properties: chosenProperties, mentions: chosenMentions } : {}) });
-    if (done.reply_error) host.toast(t('replyFailed'), 'error', done.reply_error);
-    else host.toast(t('sent', { destination }), 'success');
-    close();
-  };
   const send = async (): Promise<void> => {
     setSending(true);
     setProblem(null);
     try {
-      await deliver();
+      const done = await host.post<Done>('publish', { file: target.file, destination, ...(plan?.posted_by_other ? { take_over: true } : {}), ...(plan?.reply && !posting ? { no_reply: true } : {}), ...(plan?.reply_offered && posting ? { post_reply: true } : {}), ...(first ? { properties: chosenProperties, mentions: chosenMentions } : {}) });
+      if (done.reply_error) host.toast(t('replyFailed'), 'error', done.reply_error);
+      else host.toast(t('sent', { destination }), 'success');
+      close();
     } catch (cause) {
       setProblem(reason(cause));
     } finally {
       setSending(false);
     }
   };
+  const said = plan && { post: t('actionPost'), edit: t('actionEdit'), repost: t('actionRepost'), none: t('actionNone'), refused: t('actionRefused') }[plan.action];
   const sendable = plan !== null && plan.action !== 'none' && plan.action !== 'refused';
   const signedOut = account === null;
-  // the choices made for this publish (what a first post shows, who it mentions, whether the update goes in the
-  // thread), which closing the dialog or leaving the page asks about first; Save there sends it, as Send does
-  const draft = useDraft({
-    dirty: target !== null && sendable && !signedOut && (properties !== null || mentions !== null || postUpdate !== null),
-    title: plan?.title ?? '',
-    save: async () => {
-      setProblem(null);
-      try {
-        await deliver();
-      } catch (cause) {
-        setProblem(reason(cause));
-        throw cause;
-      }
-    },
-    discard: close,
-    words: { save: t('send', { service }) },
-    modal: true,
-  });
-
-  if (!target) return null;
-  const said = plan && { post: t('actionPost'), edit: t('actionEdit'), repost: t('actionRepost'), none: t('actionNone'), refused: t('actionRefused') }[plan.action];
-  const cancel = (): void => draft.leave(close);
   return (
     <Modal
       title={t('dialogTitle', { title: plan?.title ?? '' })}
       size="lg"
       onClose={close}
-      {...(KIT_DRAFTS ? { draft } : {})}
       foot={
         <Row justify="end" gap="sm">
-          <Button onClick={cancel}>{sendable ? t('cancel') : t('close')}</Button>
+          <Button onClick={close}>{sendable ? t('cancel') : t('close')}</Button>
           {sendable && (
             <Button
               variant="primary"
@@ -660,26 +614,6 @@ function PublishSettings({ SignIn, linkNamesChannel, mentionable }: { SignIn: Si
       setBusy(false);
     }
   };
-  const connect = async (): Promise<void> => {
-    await host.post('connect', { name, link });
-    setName('');
-    setLink('');
-    load();
-  };
-  // a channel typed but not added yet, which leaving the settings asks about first; Save there adds it, as Add does
-  const typed = useDraft({
-    dirty: link.trim() !== '' || name.trim() !== '',
-    title: t('channels'),
-    save: async () => {
-      if (link.trim() === '') throw new Error(t('linkHint'));
-      await connect();
-    },
-    discard: () => {
-      setName('');
-      setLink('');
-    },
-    words: { save: t('add') },
-  });
 
   if (!state) return <SkeletonBar height={120} />;
   const { account, destinations } = state;
@@ -734,11 +668,22 @@ function PublishSettings({ SignIn, linkNamesChannel, mentionable }: { SignIn: Si
           />
         )}
         <Row justify="end">
-          <Button variant="primary" data-testid="publish-add" disabled={busy || link.trim() === ''} onClick={() => void act(connect)}>
+          <Button
+            variant="primary"
+            data-testid="publish-add"
+            disabled={busy || link.trim() === ''}
+            onClick={() =>
+              void act(async () => {
+                await host.post('connect', { name, link });
+                setName('');
+                setLink('');
+                load();
+              })
+            }
+          >
             {t('add')}
           </Button>
         </Row>
-        {KIT_DRAFTS && <SaveNotice draft={typed} />}
       </Card>
       {mentionable && <MentionDefaults channels={destinations.length} canMention={account?.can_mention === true} />}
       <ReplySettings />

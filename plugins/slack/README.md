@@ -74,7 +74,6 @@ The **Publish to Slack** step publishes the file that started a run, or one you 
 ## Requirements
 
 - Eidos MD 0.18.0 or later.
-- On Eidos MD 0.26.0 or later, what you chose in the publish dialog and a channel you typed but haven't added ask before they're lost: closing the dialog or leaving the page asks **Discard**, **Keep editing**, or **Send to Slack** (**Add channel** in settings). On an older Eidos MD, they're dropped as before.
 - A Slack workspace where you can create and install an app, or a workspace admin who approves it.
 
 ## Privacy
