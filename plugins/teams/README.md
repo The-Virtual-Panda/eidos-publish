@@ -87,6 +87,7 @@ The **Publish to Teams** step publishes the file that started a run, or one you 
 ## Requirements
 
 - Eidos MD 0.18.0 or later.
+- On Eidos MD 0.26.0 or later, what you chose in the publish dialog and a channel you typed but haven't added ask before they're lost: closing the dialog or leaving the page asks **Discard**, **Keep editing**, or **Send to Teams** (**Add channel** in settings). On an older Eidos MD, they're dropped as before.
 - A Microsoft 365 work or school account that can post in the channel.
 - An administrator's approval for editing in place and for mentioning tags.
 
