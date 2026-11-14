@@ -336,6 +336,7 @@ export function registerPublish(host: Host, provider: Provider, api: PublishApi)
               print(
                 `${plan.action === 'none' ? 'Nothing to send' : plan.action === 'refused' ? 'Refused' : `Would ${plan.action === 'repost' ? 'post a new message' : plan.action}`}: ${plan.title} to ${plan.destination}. ${plan.reason}`,
               );
+              if (!plan.signed_in && plan.action !== 'none' && plan.action !== 'refused') print(provider.signIn);
               if (plan.action !== 'none' && plan.action !== 'refused') print(`\n${plan.message}`);
               if (plan.reply) print(`\nWould reply in the thread:\n${plan.reply.map((line) => `  ${line}`).join('\n')}`);
               if (plan.posted_by_other) print('\nPublishing asks you to confirm this first; --take-over skips that.');

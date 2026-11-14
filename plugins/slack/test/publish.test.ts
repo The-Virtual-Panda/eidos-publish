@@ -90,13 +90,21 @@ test('a channel added by its link alone is named from Slack, and one Slack will 
   for (const name of ['product-updates', 'slack-channel', 'slack-channel-2']) await ok(['disconnect', name]);
 });
 
-test('REQ5: a dry run needs no sign-in and sends nothing', async () => {
+test('REQ5: a dry run needs no sign-in and sends nothing, and says signed out how to sign in, in the CLI\'s words alone', async () => {
   await ok(['logout']);
   const name = await destination();
-  const plan = JSON.parse(await ok(['publish', DOC, '--to', name, '--dry-run', '--json'])) as { action: string; message: string };
+  const plan = JSON.parse(await ok(['publish', DOC, '--to', name, '--dry-run', '--json'])) as { action: string; message: string; signed_in: boolean; reason: string };
   assert.equal(plan.action, 'post');
   assert.equal(plan.message, '# Overview\n\nFirst words.');
+  // the page offers its own sign-in from signed_in, so the reason names no command
+  assert.equal(plan.signed_in, false);
+  assert.equal(plan.reason.includes('eidos slack login'), false);
+  assert.match(await ok(['publish', DOC, '--to', name, '--dry-run']), /^Sign in with `eidos slack login` to send it\.$/m);
   assert.equal(fake.calls.length, 0);
+  await ok(['login'], `${TOKEN}\n`);
+  const signed = JSON.parse(await ok(['publish', DOC, '--to', name, '--dry-run', '--json'])) as { signed_in: boolean };
+  assert.equal(signed.signed_in, true);
+  assert.doesNotMatch(await ok(['publish', DOC, '--to', name, '--dry-run']), /Sign in with/);
 });
 
 test('REQ4, REQ5, REQ6: post, nothing on no change, edit in place, and a reply past the threshold', async () => {

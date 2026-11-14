@@ -163,12 +163,16 @@ function MentionPicker({ destination, chosen, onChange, onProblem }: { destinati
   );
 }
 
-function PublishDialog({ service, mentionable, MessagePreview }: { service: string; mentionable: boolean; MessagePreview: (props: { message: string }) => JSX.Element }): JSX.Element | null {
+function PublishDialog({ service, mentionable, SignIn, MessagePreview }: { service: string; mentionable: boolean; SignIn: SignIn; MessagePreview: (props: { message: string }) => JSX.Element }): JSX.Element | null {
   const host = usePluginHost();
   const hostRef = useHostRef(host);
   const { t } = host;
   const [target, setTarget] = useState<{ file: string; destination?: string } | null>(null);
   const [destinations, setDestinations] = useState<Destination[] | null>(null);
+  // who sends it, undefined until the state is read and null while signed out, when the sign-in is offered in place
+  const [account, setAccount] = useState<Account | null | undefined>(undefined);
+  // read again once the person signs in, so the plan (mentions, editing) follows the account
+  const [signedAt, setSignedAt] = useState(0);
   const [destination, setDestination] = useState('');
   const [plan, setPlan] = useState<Plan | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
@@ -183,6 +187,7 @@ function PublishDialog({ service, mentionable, MessagePreview }: { service: stri
     openDialog = (file, chosen) => {
       setTarget({ file, ...(chosen ? { destination: chosen } : {}) });
       setDestinations(null);
+      setAccount(undefined);
       setPlan(null);
       setProblem(null);
       setProperties(null);
@@ -199,6 +204,7 @@ function PublishDialog({ service, mentionable, MessagePreview }: { service: stri
     hostRef.current.get<State>('state').then(
       (state) => {
         setDestinations(state.destinations);
+        setAccount(state.account);
         setDestination(target.destination ?? state.destinations[0]?.name ?? '');
       },
       (cause) => setProblem(reason(cause)),
@@ -207,8 +213,25 @@ function PublishDialog({ service, mentionable, MessagePreview }: { service: stri
 
   // a channel's team may arrive after the dialog opens; the channel chosen stays chosen
   usePluginEvent('changed', () => {
-    if (target) hostRef.current.get<State>('state').then((state) => setDestinations(state.destinations), () => undefined);
+    if (target)
+      hostRef.current.get<State>('state').then(
+        (state) => {
+          setDestinations(state.destinations);
+          setAccount(state.account);
+        },
+        () => undefined,
+      );
   });
+  // signed in from the dialog: the account read again, the plan with it, and every choice made so far kept
+  const signedIn = useCallback(() => {
+    hostRef.current.get<State>('state').then(
+      (state) => {
+        setAccount(state.account);
+        setSignedAt((at) => at + 1);
+      },
+      (cause) => setProblem(reason(cause)),
+    );
+  }, [hostRef]);
 
   useEffect(() => {
     if (!target || !destination) return;
@@ -225,7 +248,7 @@ function PublishDialog({ service, mentionable, MessagePreview }: { service: stri
     return () => {
       live = false;
     };
-  }, [hostRef, target, destination, properties]);
+  }, [hostRef, target, destination, properties, signedAt]);
 
   if (!target) return null;
   const first = plan?.first;
@@ -250,6 +273,7 @@ function PublishDialog({ service, mentionable, MessagePreview }: { service: stri
   };
   const said = plan && { post: t('actionPost'), edit: t('actionEdit'), repost: t('actionRepost'), none: t('actionNone'), refused: t('actionRefused') }[plan.action];
   const sendable = plan !== null && plan.action !== 'none' && plan.action !== 'refused';
+  const signedOut = account === null;
   return (
     <Modal
       title={t('dialogTitle', { title: plan?.title ?? '' })}
@@ -259,7 +283,13 @@ function PublishDialog({ service, mentionable, MessagePreview }: { service: stri
         <Row justify="end" gap="sm">
           <Button onClick={close}>{sendable ? t('cancel') : t('close')}</Button>
           {sendable && (
-            <Button variant="primary" disabled={sending} data-testid="publish-send" onClick={() => void send()}>
+            <Button
+              variant="primary"
+              disabled={sending || signedOut}
+              data-testid="publish-send"
+              {...(signedOut ? { 'data-tip': t('signInFirst', { service }), 'data-tip-pos': 'top' } : {})}
+              onClick={() => void send()}
+            >
               {plan?.posted_by_other ? t('sendAnyway') : t('send', { service })}
             </Button>
           )}
@@ -301,6 +331,12 @@ function PublishDialog({ service, mentionable, MessagePreview }: { service: stri
             }
           />
         )}
+        {signedOut && sendable && (
+          <Stack gap="sm" data-testid="publish-sign-in">
+            <Notice tone="warn">{t('signInToSend', { service })}</Notice>
+            <SignIn account={null} reload={signedIn} />
+          </Stack>
+        )}
         {problem && <Notice tone="error">{problem}</Notice>}
         {!plan && !problem && destinations?.length !== 0 && <SkeletonBar height={120} />}
         {plan && (
@@ -315,7 +351,8 @@ function PublishDialog({ service, mentionable, MessagePreview }: { service: stri
                 {plan.reason}
               </Text>
             )}
-            {first && (first.can_mention || mentionable) && (
+            {/* mentions are searched as the account, so they wait for the sign-in offered above */}
+            {first && !signedOut && (first.can_mention || mentionable) && (
               <Stack gap="xs">
                 <Text size="sm" weight="strong" block>
                   {t('mentionTitle')}
@@ -691,7 +728,7 @@ export function publishPage({ name, service, strings, SignIn, Icon, MessagePrevi
         },
       },
     ],
-    layer: () => <PublishDialog service={service} mentionable={mentionable} MessagePreview={MessagePreview} />,
+    layer: () => <PublishDialog service={service} mentionable={mentionable} SignIn={SignIn} MessagePreview={MessagePreview} />,
     settings: () => <PublishSettings SignIn={SignIn} linkNamesChannel={linkNamesChannel} mentionable={mentionable} />,
     settingsDrawn: ['destinations', 'reply', 'reply_min_chars', ...(mentionable ? ['default_mentions'] : [])],
   };
