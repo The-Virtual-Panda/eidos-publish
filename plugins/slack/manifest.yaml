@@ -2,7 +2,7 @@
 name: slack
 title: Publish to Slack
 description: "Publish a blueprint or a top-level doc to a Slack channel as one message, edited in place when the file changes, and only when you ask"
-version: 0.1.0
+version: 0.1.1
 min_host: 0.18.0
 settings:
   - name: destinations
